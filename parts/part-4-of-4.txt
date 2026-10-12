@@ -1,6 +1,6 @@
     const note = $('[data-note="cash"]', root);
     if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
-    moon.setAttribute('aria-label', 'Market manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+    moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
   }
   async function updateBadges() {
     try {

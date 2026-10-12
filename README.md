@@ -1,4 +1,4 @@
-# 🌙 Moonshine Asset Management
+# 🌙 Moonshine Asset Manager
 
 **An all-in-one stock market tool for Torn City, built for Torn PDA.**
 
@@ -116,7 +116,7 @@ The script checks GitHub for a newer version every 6 hours. When one is out, the
 **Installing the update in Torn PDA:**
 1. Menu → **Settings → Advanced Browser Settings → Manage scripts**.
 2. Tap the check-for-updates button at the top. A green bar appears: *"1 script update available"*.
-3. Tap **REVIEW**, tick the script and apply. Reload Torn.
+3. Tap **REVIEW**, tick **Moonshine Asset Manager** and apply. Reload Torn.
 
 This only works if the script was added with **+ → Remote** and the link above. A pasted-in script can't update itself; delete it and add it again from the link.
 

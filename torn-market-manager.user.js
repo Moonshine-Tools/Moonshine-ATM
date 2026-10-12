@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Torn Market Manager (all-in-one)
+// @name         Moonshine Asset Manager
 // @namespace    torn-market-manager
-// @version      2.4.2
+// @version      2.5.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.4.2';
+  const SCRIPT_VERSION = '2.5.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -504,7 +504,7 @@
       <ol class="tmm-why">
         <li>Open Torn PDA's menu (top left) → <b>Settings</b> → <b>Advanced Browser Settings</b> → <b>Manage scripts</b>.</li>
         <li>Tap the <b>check for updates</b> button at the top. A green bar says <b>"1 script update available"</b>.</li>
-        <li>Tap <b>REVIEW</b>, tick Torn Market Manager and apply.</li>
+        <li>Tap <b>REVIEW</b>, tick Moonshine Asset Manager and apply.</li>
         <li>Reload this page.</li>
       </ol>
       <div class="tmm-sub">If there's no update bar, the script was pasted in rather than added from its link. Delete it and add it again with <b>+</b> → <b>Remote</b>, using the link below. Your settings and price history are kept.</div>
@@ -1251,7 +1251,7 @@
     root = document.createElement('div');
     root.id = 'tmm-root';
     root.innerHTML = `
-      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
+      <button class="tmm-moon" aria-label="Moonshine Asset Manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
       <div class="tmm-menu" hidden>
         <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
         <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
@@ -1737,7 +1737,7 @@
     moon.classList.toggle('has-cash', has);
     const note = $('[data-note="cash"]', root);
     if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
-    moon.setAttribute('aria-label', 'Market manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+    moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
   }
   async function updateBadges() {
     try {

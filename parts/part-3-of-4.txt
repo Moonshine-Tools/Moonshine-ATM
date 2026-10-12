@@ -13,7 +13,7 @@
     root = document.createElement('div');
     root.id = 'tmm-root';
     root.innerHTML = `
-      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
+      <button class="tmm-moon" aria-label="Moonshine Asset Manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
       <div class="tmm-menu" hidden>
         <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
         <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
