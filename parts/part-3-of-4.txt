@@ -1,53 +1,3 @@
-  #tmm-root .tmm-scroll{overflow-x:auto}
-  #tmm-root .tmm-field{margin:9px 0} #tmm-root .tmm-field label{display:block;color:var(--muted);margin-bottom:3px}
-  #tmm-root .tmm-field input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--field);color:var(--ink);font-size:15px}
-  #tmm-root .tmm-check{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--ink)}
-  #tmm-root .tmm-pos,#tmm-root .tmm-tbl td.tmm-pos,#tmm-root .tmm-kpis b.tmm-pos{color:var(--pos)} #tmm-root .tmm-neg,#tmm-root .tmm-tbl td.tmm-neg,#tmm-root .tmm-kpis b.tmm-neg{color:var(--neg)}
-  #tmm-root .tmm-chart-wrap{position:relative}
-  #tmm-root .tmm-chart{display:block;width:100%;height:auto;touch-action:pan-y}
-  #tmm-root .tmm-c-grid{stroke:var(--line);stroke-width:1}
-  #tmm-root .tmm-c-zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
-  #tmm-root .tmm-c-ax{fill:var(--muted);font-size:10px}
-  #tmm-root .tmm-c-lab{fill:var(--ink);font-size:10px;font-weight:600}
-  #tmm-root .tmm-c-you{fill:none;stroke:var(--you);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-  #tmm-root .tmm-c-mkt{fill:none;stroke:var(--mkt);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:5 3}
-  #tmm-root .tmm-c-x{stroke:var(--muted);stroke-width:1}
-  #tmm-root .tmm-c-tip{position:absolute;top:0;width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;line-height:1.35;pointer-events:none;box-shadow:0 2px 8px var(--shadow)}
-  #tmm-root .tmm-c-legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:4px}
-  #tmm-root .tmm-c-sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--you);vertical-align:middle;margin-right:5px}
-  #tmm-root .tmm-c-sw.mkt{border-top:2px dashed var(--mkt)}
-  #tmm-root .tmm-chip[aria-pressed=true]{border-color:var(--brass);color:var(--head);font-weight:600}
-  #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
-  #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
-    background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
-  #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
-  #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
-  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
-  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
-  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
-
-  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
-    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
-    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
-    <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
-
-  let root, sheet, pill = null, moon, menu, watchTimer = null;
-  const MOON = 46, EDGE_GAP = 6;
-
-  const isDark = () => document.body.classList.contains('dark-mode') || document.documentElement.classList.contains('dark-mode');
-  function applyTheme() { if (root) root.dataset.theme = isDark() ? 'dark' : 'light'; }
-
-  function mountUI() {
-    if (document.getElementById('tmm-root')) return;
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
-    root = document.createElement('div');
-    root.id = 'tmm-root';
-    root.innerHTML = `
-      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
       <div class="tmm-menu" hidden>
         <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
         <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
@@ -154,19 +104,20 @@
   // Collapsed state: the sheet hides and a small status pill stays at the top.
   function showPill(text, cls = '', extra = null) {
     if (pill) pill.remove();
+    const extras = (Array.isArray(extra) ? extra : extra ? [extra] : []).filter(Boolean);
     pill = document.createElement('div');
     pill.className = 'tmm-pill ' + cls;
     pill.setAttribute('role', 'status');
-    pill.innerHTML = `<span class="tmm-pill-t">${esc(text)}</span>${extra ? `<button data-p="extra" class="tmm-pill-go">${esc(extra.label)}</button>` : ''}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
+    pill.innerHTML = `<span class="tmm-pill-t">${esc(text)}</span>${extras.map((x, i) => `<button data-p="extra" data-i="${i}" class="${i ? '' : 'tmm-pill-go'}">${esc(x.label)}</button>`).join('')}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
     pill.addEventListener('click', (e) => {
       const b = e.target.closest('[data-p]');
       if (b && b.dataset.p === 'x') return closeSheet();
-      if (b && b.dataset.p === 'extra' && extra) return extra.fn();
+      if (b && b.dataset.p === 'extra') return extras[Number(b.dataset.i)].fn();
       if (b && b.dataset.p === 'open') expandSheet();
     });
     root.appendChild(pill);
   }
-  function minimizeSheet(text) { if (!sheet) return; sheet.style.display = 'none'; showPill(text); }
+  function minimizeSheet(text, extras = null) { if (!sheet) return; sheet.style.display = 'none'; showPill(text, '', extras); }
   function expandSheet() { if (sheet) sheet.style.display = ''; if (pill) { pill.remove(); pill = null; } }
   function updatePill(text) { const t = pill && pill.querySelector('.tmm-pill-t'); if (t) t.textContent = text; }
 
@@ -441,3 +392,100 @@
 
     html += `<h4>All stocks</h4><div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Stock</th><th>Price</th><th>vs normal</th><th>Expected ${hLabel(an.h)}</th><th>Owned</th><th>Spare</th></tr>`;
     const L = an.market ? liveStocks(an, user) : {};
+    const rows = Object.values(L).sort((a, b) => ((b.pred ? b.pred.mean : -9) - (a.pred ? a.pred.mean : -9)));
+    for (const x of rows) {
+      html += `<tr><td>${esc(x.s.acr)}</td><td>${x.price.toFixed(2)}</td><td>${Number.isFinite(x.z) ? (x.z >= 0 ? '+' : '') + x.z.toFixed(1) + 'σ' : '—'}</td><td class="${x.pred && x.pred.mean >= 0 ? 'tmm-pos' : 'tmm-neg'}">${x.pred ? pct(x.pred.mean) : '—'}</td><td>${x.owned ? num(x.owned) : ''}</td><td>${x.owned ? num(Math.max(0, x.spare)) : ''}</td></tr>`;
+    }
+    html += `</table></div>`;
+
+    const minN = await DB.count('minute');
+    html += `<h4>Data on this phone</h4><div class="tmm-sub">${num(an.hours)} hourly prices across ${an.nStocks} stocks${Number.isFinite(an.oldest) ? `, back to ${new Date(an.oldest * 1000).toLocaleDateString()}` : ''}. ${num(minN)} minute snapshots (kept 90 days). ${esc(sync.status)}</div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-rerun">Re-run analysis</button><button class="tmm-plain" id="tmm-sync">Download history now</button></div>`;
+    body.innerHTML = html;
+    $('#tmm-rerun', body).onclick = async () => { body.innerHTML = '<div class="tmm-sub">Analyzing…</div>'; await DB.setMeta('validation', null); await analyze(true); showMarket('details'); };
+    $('#tmm-sync', body).onclick = () => { syncHistory(true).then(() => analyze(true)); $('#tmm-sync', body).textContent = 'Downloading… keep Torn open'; };
+  }
+
+  function renderSettings(body) {
+    const pda = !PDA_KEY.includes('#');
+    const f = (id, label, val, ph = '') => `<div class="tmm-field"><label for="${id}">${label}</label><input type="text" id="${id}" value="${esc(val)}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
+    const c = (id, label, on) => `<label class="tmm-check"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`;
+    body.innerHTML = `
+      ${pda ? '<div class="tmm-sub">Using your Torn PDA API key.</div>' : f('s-key', 'Torn API key (Limited Access)', settings.apiKey)}
+      <h4>Cash</h4>
+      ${f('s-keep', 'Keep this much cash on hand after a deposit', short(settings.keepOnHand))}
+      ${f('s-park', 'Parking stock (used while the model is learning)', settings.parkStock, 'e.g. TCI')}
+      ${f('s-ex', 'Never trade these stocks', settings.exclude, 'e.g. WSU, TCB')}
+      ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
+      ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
+      ${c('s-vault', 'Offer faction vault deposits (only shown if you are in a faction)', settings.factionVault)}
+      ${f('s-church', 'Only suggest the church for amounts up to', short(settings.churchMax))}
+      <h4>Recommendations</h4>
+      ${f('s-edge', 'Minimum advantage after fees (%)', settings.minEdgePct)}
+      ${f('s-t', 'Evidence required (how many times bigger than the uncertainty)', settings.evidenceT)}
+      ${f('s-maxw', 'Most of your portfolio in one stock (%)', settings.maxWeightPct)}
+      ${f('s-mint', 'Smallest trade worth suggesting', short(settings.minTrade))}
+      ${c('s-unval', 'Show recommendations even if the model fails its test (not advised)', settings.showUnvalidated)}
+      <h4>Data and display</h4>
+      ${f('s-days', 'Days of history to download', settings.historyDays)}
+      ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
+      <div class="tmm-row"><button class="tmm-plain" id="s-moon">Move the moon back to its default spot</button></div>
+      <h4>Updates</h4>
+      <div class="tmm-sub" id="s-ver">You have v${SCRIPT_VERSION}.${updateConfigured() ? '' : ' Update checks are off until the GitHub link is set in the script.'}</div>
+      <div class="tmm-row">${updateConfigured() ? '<button class="tmm-plain" id="s-chk">Check for updates</button>' : ''}</div>
+      <div class="tmm-row"><button class="tmm-act" id="s-save">Save settings</button></div>`;
+    const chk = $('#s-chk', body);
+    if (chk) chk.onclick = async () => {
+      chk.textContent = 'Checking…';
+      const u = await checkForUpdate(true);
+      const v = $('#s-ver', body);
+      if (u) {
+        v.innerHTML = `Update available: <b>v${esc(u.latest)}</b> (you have v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Update now'; chk.className = 'tmm-act'; chk.onclick = installUpdate;
+      } else {
+        const s = store.get('update', null);
+        v.textContent = s && s.err ? `Couldn't reach GitHub: ${s.err}` : `You have the latest version (v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Check again';
+      }
+    };
+    $('#s-moon', body).onclick = () => { store.set('dock', { edge: 'right', pos: 0.72 }); placeMoon(); };
+    $('#s-save', body).onclick = () => {
+      const g = (id) => $('#' + id, body).value.trim();
+      const n = (id, d, lo, hi) => { const x = parseFloat(g(id)); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+      if (!pda) settings.apiKey = g('s-key');
+      const keep = parseAmount(g('s-keep')); settings.keepOnHand = keep > 0 ? keep : 0;
+      settings.parkStock = g('s-park').toUpperCase();
+      settings.exclude = g('s-ex');
+      settings.bufferPct = n('s-buf', DEFAULTS.bufferPct, 0, 5);
+      settings.depositOwnedOnly = $('#s-own', body).checked;
+      settings.factionVault = $('#s-vault', body).checked;
+      const cm = parseAmount(g('s-church')); settings.churchMax = cm >= 0 ? cm : DEFAULTS.churchMax;
+      settings.minEdgePct = n('s-edge', DEFAULTS.minEdgePct, 0, 50);
+      settings.evidenceT = n('s-t', DEFAULTS.evidenceT, 0, 10);
+      settings.maxWeightPct = n('s-maxw', DEFAULTS.maxWeightPct, 5, 100);
+      const mt = parseAmount(g('s-mint')); settings.minTrade = mt >= 0 ? mt : DEFAULTS.minTrade;
+      settings.showUnvalidated = $('#s-unval', body).checked;
+      settings.historyDays = Math.round(n('s-days', DEFAULTS.historyDays, 30, 3650));
+      settings.autoOpen = $('#s-open', body).checked;
+      saveSettings();
+      if (A) A.dirty = true;
+      showMarket('overview');
+    };
+  }
+
+  // ------------------------------------------------------------ badges
+  // Orange dot: you're carrying cash. Green dot: there's a trade recommendation.
+  function cashNow() { const c = domCash(); return c != null ? c : userMem ? userMem.cash : null; }
+  function updateCashBadge() {
+    if (!moon) return;
+    const cash = cashNow();
+    const has = cash != null && cash > settings.keepOnHand + 1000;
+    moon.classList.toggle('has-cash', has);
+    const note = $('[data-note="cash"]', root);
+    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
+    moon.setAttribute('aria-label', 'Market manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+  }
+  async function updateBadges() {
+    try {
+      if (!apiKey()) return;
+      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }

@@ -1,57 +1,3 @@
-    }
-    const market = marketMem || store.get('market', null);
-    for (const [sid, byH] of Object.entries(closes)) {
-      const rec = (await DB.get('hourly', sid)) || { sid, acr: market && market.stocks[sid] ? market.stocks[sid].acr : '', t: [], c: [] };
-      mergeSeries(rec, Object.entries(byH).map(([h, c]) => [Number(h), c]));
-      await DB.put('hourly', rec);
-    }
-    await DB.setMeta('foldedTo', nowH);
-    if (A) A.dirty = true;
-  }
-
-  async function snapshot(m, u) {
-    let val = u.cash;
-    const holdings = {};
-    for (const [sid, n] of Object.entries(u.owned)) {
-      const s = m.stocks[sid]; if (!s) continue;
-      val += n * s.price; holdings[sid] = n;
-    }
-    await DB.put('snapshots', { t: hourStart(Math.floor(Date.now() / 1000)), cash: u.cash, holdings, value: val });
-  }
-
-  // Download hourly history from tornsy.com: newest first, then older pages.
-  async function syncHistory(force = false) {
-    if (sync.running) return;
-    sync.running = true;
-    try {
-      const m = await getMarket(600);
-      const prog = (await DB.meta('syncProg', {})) || {};
-      const minT = Math.floor(Date.now() / 1000) - settings.historyDays * 86400;
-      const ids = Object.keys(m.stocks);
-      let round = 0;
-      while (round++ < 40) {
-        let work = false;
-        for (let k = 0; k < ids.length; k++) {
-          if (document.visibilityState === 'hidden' && !force) return;
-          const sid = ids[k], s = m.stocks[sid];
-          const st = prog[sid] || (prog[sid] = {});
-          const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };
-          rec.acr = s.acr;
-          const base = `https://tornsy.com/api/${s.acr.toLowerCase()}?interval=h1&limit=2000`;
-          const nowSec = Math.floor(Date.now() / 1000);
-          let pts = [];
-          try {
-            if (!st.newest || nowSec - st.newest > 3600) {
-              const url = st.newest ? `${base}&from=${st.newest}` : base;
-              const j = await httpGetJSON(url);
-              pts = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
-              if (pts.length) {
-                st.newest = Math.max(st.newest || 0, pts[pts.length - 1][0]);
-                st.oldest = Math.min(st.oldest || Infinity, pts[0][0]);
-              }
-              await sleep(1100);
-            }
-            if (!st.done && st.oldest && st.oldest > minT) {
               const j = await httpGetJSON(`${base}&to=${st.oldest}`);
               const older = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
               if (!older.length) st.done = true;
@@ -486,6 +432,11 @@
       return v;
     };
     opts.sort((a, b) => score(b) - score(a));
+    // A "good buy": the model expects it to rise and it won't overweight you.
+    // Without a validated model there's no way to judge, so every option counts.
+    for (const o of opts) o.good = !useModel || (!!o.pred && o.pred.mean > 0 && !o.overweight);
+    if (opts.length && !opts.some((o) => o.good)) return { noGood: true, best: opts[0], alts: opts.slice(1, 4), avail, mode: 'model' };
+    if (opts.length && !opts[0].good) opts.sort((a, b) => (b.good - a.good) || (score(b) - score(a)));
     if (!opts.length) return { tooSmall: useModel || Object.values(L).some((x) => x.allowed && (x.owned || x.s.acr === park)), error: useModel ? `${money(avail)} isn't enough to buy one share of an allowed stock.` : 'No stock to deposit into yet. Set a parking stock in Market → Settings, or wait for the model to finish learning.' };
     return { legs: [opts[0]], alts: opts.slice(1, 4), mode: useModel ? 'model' : 'simple', avail };
   }
@@ -546,3 +497,54 @@
   #tmm-root .tmm-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:transparent}
   #tmm-root .tmm-tbl th,#tmm-root .tmm-tbl td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--ink);background:transparent}
   #tmm-root .tmm-tbl th:first-child,#tmm-root .tmm-tbl td:first-child{text-align:left} #tmm-root .tmm-tbl th{color:var(--muted);font-weight:600}
+  #tmm-root .tmm-scroll{overflow-x:auto}
+  #tmm-root .tmm-field{margin:9px 0} #tmm-root .tmm-field label{display:block;color:var(--muted);margin-bottom:3px}
+  #tmm-root .tmm-field input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--field);color:var(--ink);font-size:15px}
+  #tmm-root .tmm-check{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--ink)}
+  #tmm-root .tmm-pos,#tmm-root .tmm-tbl td.tmm-pos,#tmm-root .tmm-kpis b.tmm-pos{color:var(--pos)} #tmm-root .tmm-neg,#tmm-root .tmm-tbl td.tmm-neg,#tmm-root .tmm-kpis b.tmm-neg{color:var(--neg)}
+  #tmm-root .tmm-chart-wrap{position:relative}
+  #tmm-root .tmm-chart{display:block;width:100%;height:auto;touch-action:pan-y}
+  #tmm-root .tmm-c-grid{stroke:var(--line);stroke-width:1}
+  #tmm-root .tmm-c-zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+  #tmm-root .tmm-c-ax{fill:var(--muted);font-size:10px}
+  #tmm-root .tmm-c-lab{fill:var(--ink);font-size:10px;font-weight:600}
+  #tmm-root .tmm-c-you{fill:none;stroke:var(--you);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  #tmm-root .tmm-c-mkt{fill:none;stroke:var(--mkt);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:5 3}
+  #tmm-root .tmm-c-x{stroke:var(--muted);stroke-width:1}
+  #tmm-root .tmm-c-tip{position:absolute;top:0;width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;line-height:1.35;pointer-events:none;box-shadow:0 2px 8px var(--shadow)}
+  #tmm-root .tmm-c-legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:4px}
+  #tmm-root .tmm-c-sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--you);vertical-align:middle;margin-right:5px}
+  #tmm-root .tmm-c-sw.mkt{border-top:2px dashed var(--mkt)}
+  #tmm-root .tmm-chip[aria-pressed=true]{border-color:var(--brass);color:var(--head);font-weight:600}
+  #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
+  #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
+    background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
+  #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
+  #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  #tmm-root .tmm-pill button{white-space:nowrap}
+  #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
+  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
+  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
+  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
+  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
+
+  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
+    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
+    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
+    <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
+
+  let root, sheet, pill = null, moon, menu, watchTimer = null;
+  const MOON = 46, EDGE_GAP = 6;
+
+  const isDark = () => document.body.classList.contains('dark-mode') || document.documentElement.classList.contains('dark-mode');
+  function applyTheme() { if (root) root.dataset.theme = isDark() ? 'dark' : 'light'; }
+
+  function mountUI() {
+    if (document.getElementById('tmm-root')) return;
+    const style = document.createElement('style');
+    style.textContent = CSS;
+    document.head.appendChild(style);
+    root = document.createElement('div');
+    root.id = 'tmm-root';
+    root.innerHTML = `
+      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>

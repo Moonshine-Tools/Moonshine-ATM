@@ -30,7 +30,12 @@ Type how much cash you need, like `5m`, `750k` or `1.2b`. The script picks which
 - If no single stock has enough spare shares, it splits the withdrawal into separate sales and walks you through each one.
 
 ### 🏦 Quick deposit
-One tap reads the cash you're carrying and buys as many whole shares as it covers of the stock with the best outlook. Extra weight goes to purchases that complete a benefit block. Leftover cash too small to buy even one share can be **donated to the church** in one tap: the script opens the church's Donate tab and fills in the amount for you.
+One tap reads the cash you're carrying and buys as many whole shares as it covers of the stock with the best outlook. Extra weight goes to purchases that complete a benefit block.
+
+- **Only good buys.** If no stock is expected to rise, it says *No good buys right now* and suggests the faction vault instead of buying into a falling stock.
+- **Leftover cash.** After a purchase, if there's enough left for more shares of a good buy, it offers to buy them. Otherwise it offers the faction vault, or the church for small amounts.
+- **Faction vault.** Deposit to your faction's vault in one tap. The script opens Faction → Armoury → Donate and fills in the money box; you tap Deposit. Only shown if you're in a faction, and not while you're in hospital, jail or traveling.
+- **Church.** Cash too small for a share can be donated to the church. The script opens the Donate tab and fills in the amount. Only suggested for small amounts, because a donation gives the money away.
 
 ### 📈 Trade ideas
 The script looks for chances to **sell a little of one stock and buy another** for a small expected gain. Each idea shows:
@@ -118,6 +123,8 @@ Tampermonkey also updates the script automatically.
 |---|---|---|
 | Keep cash on hand | $0 | Cash that Deposit leaves in your pocket |
 | Parking stock | none | Where deposits go while the model is still learning |
+| Offer faction vault | on | Show the faction vault option when you're in a faction |
+| Church limit | $100k | Largest amount the script will suggest donating to the church |
 | Never trade these | none | Stocks the script will never buy or sell |
 | Price safety margin | 0.25% | Extra room so a price tick doesn't leave you short |
 | Minimum gain after fees | 0.25% | Smallest expected gain worth suggesting |
@@ -158,7 +165,6 @@ Everyone running the script will see the update within 6 hours. If the version n
 
 ## Roadmap
 
-- [ ] Quick deposit to your faction bank
 - [ ] Withdraw from stocks that are up by more than the 0.1% fee first, using your purchase prices
 - [ ] Put a value on stock benefits in trade decisions
 

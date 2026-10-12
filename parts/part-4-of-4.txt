@@ -1,96 +1,3 @@
-    const rows = Object.values(L).sort((a, b) => ((b.pred ? b.pred.mean : -9) - (a.pred ? a.pred.mean : -9)));
-    for (const x of rows) {
-      html += `<tr><td>${esc(x.s.acr)}</td><td>${x.price.toFixed(2)}</td><td>${Number.isFinite(x.z) ? (x.z >= 0 ? '+' : '') + x.z.toFixed(1) + 'σ' : '—'}</td><td class="${x.pred && x.pred.mean >= 0 ? 'tmm-pos' : 'tmm-neg'}">${x.pred ? pct(x.pred.mean) : '—'}</td><td>${x.owned ? num(x.owned) : ''}</td><td>${x.owned ? num(Math.max(0, x.spare)) : ''}</td></tr>`;
-    }
-    html += `</table></div>`;
-
-    const minN = await DB.count('minute');
-    html += `<h4>Data on this phone</h4><div class="tmm-sub">${num(an.hours)} hourly prices across ${an.nStocks} stocks${Number.isFinite(an.oldest) ? `, back to ${new Date(an.oldest * 1000).toLocaleDateString()}` : ''}. ${num(minN)} minute snapshots (kept 90 days). ${esc(sync.status)}</div>
-      <div class="tmm-row"><button class="tmm-plain" id="tmm-rerun">Re-run analysis</button><button class="tmm-plain" id="tmm-sync">Download history now</button></div>`;
-    body.innerHTML = html;
-    $('#tmm-rerun', body).onclick = async () => { body.innerHTML = '<div class="tmm-sub">Analyzing…</div>'; await DB.setMeta('validation', null); await analyze(true); showMarket('details'); };
-    $('#tmm-sync', body).onclick = () => { syncHistory(true).then(() => analyze(true)); $('#tmm-sync', body).textContent = 'Downloading… keep Torn open'; };
-  }
-
-  function renderSettings(body) {
-    const pda = !PDA_KEY.includes('#');
-    const f = (id, label, val, ph = '') => `<div class="tmm-field"><label for="${id}">${label}</label><input type="text" id="${id}" value="${esc(val)}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
-    const c = (id, label, on) => `<label class="tmm-check"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`;
-    body.innerHTML = `
-      ${pda ? '<div class="tmm-sub">Using your Torn PDA API key.</div>' : f('s-key', 'Torn API key (Limited Access)', settings.apiKey)}
-      <h4>Cash</h4>
-      ${f('s-keep', 'Keep this much cash on hand after a deposit', short(settings.keepOnHand))}
-      ${f('s-park', 'Parking stock (used while the model is learning)', settings.parkStock, 'e.g. TCI')}
-      ${f('s-ex', 'Never trade these stocks', settings.exclude, 'e.g. WSU, TCB')}
-      ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
-      ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
-      <h4>Recommendations</h4>
-      ${f('s-edge', 'Minimum advantage after fees (%)', settings.minEdgePct)}
-      ${f('s-t', 'Evidence required (how many times bigger than the uncertainty)', settings.evidenceT)}
-      ${f('s-maxw', 'Most of your portfolio in one stock (%)', settings.maxWeightPct)}
-      ${f('s-mint', 'Smallest trade worth suggesting', short(settings.minTrade))}
-      ${c('s-unval', 'Show recommendations even if the model fails its test (not advised)', settings.showUnvalidated)}
-      <h4>Data and display</h4>
-      ${f('s-days', 'Days of history to download', settings.historyDays)}
-      ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
-      <div class="tmm-row"><button class="tmm-plain" id="s-moon">Move the moon back to its default spot</button></div>
-      <h4>Updates</h4>
-      <div class="tmm-sub" id="s-ver">You have v${SCRIPT_VERSION}.${updateConfigured() ? '' : ' Update checks are off until the GitHub link is set in the script.'}</div>
-      <div class="tmm-row">${updateConfigured() ? '<button class="tmm-plain" id="s-chk">Check for updates</button>' : ''}</div>
-      <div class="tmm-row"><button class="tmm-act" id="s-save">Save settings</button></div>`;
-    const chk = $('#s-chk', body);
-    if (chk) chk.onclick = async () => {
-      chk.textContent = 'Checking…';
-      const u = await checkForUpdate(true);
-      const v = $('#s-ver', body);
-      if (u) {
-        v.innerHTML = `Update available: <b>v${esc(u.latest)}</b> (you have v${SCRIPT_VERSION}).`;
-        chk.textContent = 'Update now'; chk.className = 'tmm-act'; chk.onclick = installUpdate;
-      } else {
-        const s = store.get('update', null);
-        v.textContent = s && s.err ? `Couldn't reach GitHub: ${s.err}` : `You have the latest version (v${SCRIPT_VERSION}).`;
-        chk.textContent = 'Check again';
-      }
-    };
-    $('#s-moon', body).onclick = () => { store.set('dock', { edge: 'right', pos: 0.72 }); placeMoon(); };
-    $('#s-save', body).onclick = () => {
-      const g = (id) => $('#' + id, body).value.trim();
-      const n = (id, d, lo, hi) => { const x = parseFloat(g(id)); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
-      if (!pda) settings.apiKey = g('s-key');
-      const keep = parseAmount(g('s-keep')); settings.keepOnHand = keep > 0 ? keep : 0;
-      settings.parkStock = g('s-park').toUpperCase();
-      settings.exclude = g('s-ex');
-      settings.bufferPct = n('s-buf', DEFAULTS.bufferPct, 0, 5);
-      settings.depositOwnedOnly = $('#s-own', body).checked;
-      settings.minEdgePct = n('s-edge', DEFAULTS.minEdgePct, 0, 50);
-      settings.evidenceT = n('s-t', DEFAULTS.evidenceT, 0, 10);
-      settings.maxWeightPct = n('s-maxw', DEFAULTS.maxWeightPct, 5, 100);
-      const mt = parseAmount(g('s-mint')); settings.minTrade = mt >= 0 ? mt : DEFAULTS.minTrade;
-      settings.showUnvalidated = $('#s-unval', body).checked;
-      settings.historyDays = Math.round(n('s-days', DEFAULTS.historyDays, 30, 3650));
-      settings.autoOpen = $('#s-open', body).checked;
-      saveSettings();
-      if (A) A.dirty = true;
-      showMarket('overview');
-    };
-  }
-
-  // ------------------------------------------------------------ badges
-  // Orange dot: you're carrying cash. Green dot: there's a trade recommendation.
-  function cashNow() { const c = domCash(); return c != null ? c : userMem ? userMem.cash : null; }
-  function updateCashBadge() {
-    if (!moon) return;
-    const cash = cashNow();
-    const has = cash != null && cash > settings.keepOnHand + 1000;
-    moon.classList.toggle('has-cash', has);
-    const note = $('[data-note="cash"]', root);
-    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
-    moon.setAttribute('aria-label', 'Market manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
-  }
-  async function updateBadges() {
-    try {
-      if (!apiKey()) return;
-      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
       updateCashBadge();
       if (!userMem) return;
       const an = await analyze();
@@ -166,9 +73,10 @@
         const plan = planDeposit(cash, base, user);
         if (plan.error) {
           const left = cash - settings.keepOnHand;
-          if (plan.tooSmall && left > 0) return showDonateOffer(left, plan.error);
+          if (plan.tooSmall && left > 0) return showSmallCashOffer(left, plan.error);
           return showError(plan.error);
         }
+        if (plan.noGood) return showNoGoodBuys(job, plan);
         return showQuick(job, plan, 0, 'buy');
       }
       if (job.action === 'rotate') return showRotation(job, base, user);
@@ -195,15 +103,148 @@
     return best;
   }
 
-  function showDonateOffer(left, why) {
+  // ------------------------------------------------------------ cash leftovers
+  const vaultAvailable = () => settings.factionVault && !!userMem && userMem.factionId > 0 &&
+    !/hospital|jail|travel|abroad|federal/i.test(userMem.state || '');
+  const churchOk = (amt) => amt >= 1 && amt <= settings.churchMax;
+  function placeOptions(amt) {
+    const out = [];
+    if (vaultAvailable()) out.push({ label: 'Faction vault', long: `Deposit ${money(amt)} to the faction vault`, fn: () => startVaultDeposit(amt) });
+    if (churchOk(amt)) out.push({ label: 'Church', long: `Donate ${money(amt)} to the church`, fn: () => startDonation(amt) });
+    return out;
+  }
+
+  // After a stock purchase: is there enough left for more, and is it worth it?
+  async function leftoverNext(job, cash) {
+    const left = cash - settings.keepOnHand;
+    if (left < 1) return false;
+    let user = userMem;
+    try { user = await getUser(30); } catch (e) { /* use what we have */ }
+    const an = A || { market: marketMem || store.get('market', null), preds: {}, model: null, S: {}, h: 24 };
+    if (!an.market || !user) return { text: `${money(left)} left on hand`, extras: placeOptions(left) };
+    const plan = planDeposit(cash, an, user);
+    if (plan.legs && plan.legs.length) {
+      const o = plan.legs[0];
+      return {
+        text: `✓ Bought · ${money(left)} left`,
+        extras: [{ label: `Buy ${num(o.shares)} ${o.s.acr}`, long: `Buy ${num(o.shares)} more ${o.s.acr}`, fn: () => showQuick(job, plan, 0, 'buy') }, ...placeOptions(left)],
+      };
+    }
+    if (plan.noGood) {
+      const ex = placeOptions(left);
+      return { text: `✓ Bought · no good buys for the last ${money(left)}`, extras: ex.length ? ex : [{ label: `Buy ${plan.best.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [plan.best] }), 0, 'buy') }] };
+    }
+    return { text: `✓ Bought · ${money(left)} left`, extras: placeOptions(left) };
+  }
+
+  // Nothing worth buying right now.
+  function showNoGoodBuys(job, plan) {
+    const o = plan.best, amt = plan.avail;
+    const opts = placeOptions(amt);
+    const s = openSheet(`
+      <h3>No good buys right now</h3>
+      <div class="tmm-sub">Every stock you can buy is expected to fall or would put too much in one stock. The best option, ${esc(o.s.acr)}, is expected to change ${o.pred ? pct(o.pred.mean) : '—'} over ${hLabel(A ? A.h : 24)}.</div>
+      <div class="tmm-big">${money(amt)} to put away</div>
+      <div class="tmm-row" id="tmm-ng"></div>
+      ${!opts.length && amt > settings.churchMax ? `<div class="tmm-sub">Buying anyway keeps your money safe in stocks; you only pay the 0.1% fee when you sell.</div>` : ''}
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
+    const row = $('#tmm-ng', s);
+    const all = [...opts, { label: `Buy ${num(o.shares)} ${o.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [o] }), 0, 'buy') }];
+    all.forEach((x, i) => { const b = document.createElement('button'); b.className = i ? 'tmm-plain' : 'tmm-act'; b.textContent = x.long || x.label; b.onclick = x.fn; row.appendChild(b); });
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // Too little cash to buy even one share.
+  function showSmallCashOffer(left, why) {
+    const opts = placeOptions(left);
     const s = openSheet(`
       <h3>Too little to buy a share</h3>
       <div class="tmm-sub">${esc(why)}</div>
       <div class="tmm-big">${money(left)} on hand</div>
-      <div class="tmm-sub">Donating it at the church gets it off you so it can't be mugged.</div>
-      <div class="tmm-row"><button class="tmm-act" id="tmm-don">Donate ${money(left)} to the church</button><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
-    $('#tmm-don', s).onclick = () => startDonation(left);
+      <div class="tmm-sub">${opts.length ? 'Put it somewhere it can\'t be mugged:' : 'Not enough for a share, and over your church limit in Settings.'}</div>
+      <div class="tmm-row" id="tmm-sc"></div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
+    const row = $('#tmm-sc', s);
+    opts.forEach((x, i) => { const b = document.createElement('button'); b.className = i ? 'tmm-plain' : 'tmm-act'; b.textContent = x.long; b.onclick = x.fn; row.appendChild(b); });
     $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // ------------------------------------------------------------ faction vault
+  // Faction → Armoury → Donate. We fill in the money box only; you tap Deposit.
+  const FACTION_URL = 'https://www.torn.com/factions.php?step=your#/tab=armoury&start=0&sub=donate';
+  const onFactionPage = () => /factions\.php/i.test(location.href);
+
+  function startVaultDeposit(amount) {
+    const job = { action: 'vault', amount: Math.floor(amount), t: Date.now() };
+    closeSheet();
+    if (!onFactionPage() || !/sub=donate/i.test(location.hash)) {
+      sessionStorage.setItem(LS + 'pending', JSON.stringify(job));
+      showPill('Opening the faction vault…');
+      if (onFactionPage()) { location.hash = '#/tab=armoury&start=0&sub=donate'; setTimeout(() => { sessionStorage.removeItem(LS + 'pending'); fillVault(job); }, 600); }
+      else location.href = FACTION_URL;
+      return;
+    }
+    fillVault(job);
+  }
+
+  // The Donate tab has a money box and a points box. Use the money one.
+  function findVaultInput() {
+    const isDepositBtn = (el) => /^(deposit|donate)\b/i.test(elText(el));
+    const isPoints = (el) => /point/i.test(elText(el));
+    const cands = $$('input').filter(visibleInput);
+    const money = cands.filter((i) => i.classList.contains('input-money'));
+    for (const inp of [...money, ...cands.filter((i) => !money.includes(i))]) {
+      let el = inp.parentElement;
+      for (let d = 0; el && d < 5; d++, el = el.parentElement) {
+        const btns = $$("button, input[type='submit'], input[type='button'], a", el).filter((x) => !x.closest('#tmm-root') && isDepositBtn(x));
+        if (!btns.length) continue;
+        const pts = btns.some(isPoints), mon = btns.some((x) => !isPoints(x));
+        if (mon && !pts) return inp;           // only a money button nearby
+        if (pts && !mon) break;                // this is the points box
+        // both buttons share this container: decide by the box's own label
+        const near = elText(inp.parentElement.parentElement || inp.parentElement);
+        if (/point/i.test(near) && !/money|\$/i.test(near)) break;
+        return inp;
+      }
+    }
+    return null;
+  }
+
+  async function fillVault(job) {
+    const cash = domCash();
+    const amount = Math.max(0, Math.floor(Math.min(job.amount, cash != null ? cash : job.amount)));
+    if (amount < 1) { showPill('No cash on hand to deposit.'); return; }
+    const copy = { label: 'Copy', fn: () => { try { navigator.clipboard.writeText(String(amount)); updatePill(`Copied ${money(amount)} · paste it in the money box`); } catch (e) { /* ignore */ } } };
+    showPill(`Faction vault ${money(amount)}`, '', copy);
+    if (!/sub=donate/i.test(location.hash)) { try { location.hash = '#/tab=armoury&start=0&sub=donate'; } catch (e) { /* ignore */ } }
+    let input = await waitFor(findVaultInput, 6000);
+    if (!input) {
+      // Try the tabs by name: Armoury, then Donate.
+      const tab = (re) => innermost($$('a, li, button, span, div, [role=tab]').filter((el) => !el.closest('#tmm-root') && el.offsetParent !== null && re.test(elText(el))))[0];
+      const arm = tab(/^armou?ry$/i); if (arm) { try { arm.click(); } catch (e) { /* ignore */ } await sleep(600); }
+      const don = tab(/^donate$/i); if (don) { try { don.click(); } catch (e) { /* ignore */ } }
+      input = await waitFor(findVaultInput, 5000);
+    }
+    if (!pill) return;
+    if (!input) { updatePill(`Type ${money(amount)} in the faction money box, tap Deposit`); return; }
+    input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const ok = await typeInto(input, amount);
+    input.classList.add('tmm-filled');
+    setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
+    updatePill(ok ? `${money(amount)} filled in · tap Deposit` : `Type ${money(amount)} in the money box, tap Deposit`);
+    const startCash = domCash();
+    const started = Date.now();
+    watchTimer = setInterval(() => {
+      if (Date.now() - started > 5 * 60000 || !pill) { clearInterval(watchTimer); watchTimer = null; return; }
+      const c = domCash();
+      if (startCash != null && c != null && c < startCash) {
+        clearInterval(watchTimer); watchTimer = null;
+        DB.add('executions', { t: Date.now(), kind: 'vault', action: 'deposit', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        showPill(`✓ Deposited to faction vault · cash ${money(c)}`, 'ok');
+        const p0 = pill;
+        setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);
+      }
+    }, 1000);
   }
 
   function startDonation(amount) {
@@ -317,7 +358,7 @@
   }
 
   // Generic: show one leg, fill Torn's box, watch for your confirmation.
-  async function showLeg({ title, action, stock, shares, price, lines, warn, alts, onAlt, recompute, onDone, kind }) {
+  async function showLeg({ title, action, stock, shares, price, lines, warn, alts, onAlt, recompute, onDone, kind, extras }) {
     const isSell = action === 'sell';
     const btn = isSell ? 'Sell' : 'Buy';
     const s = openSheet(`
@@ -327,8 +368,10 @@
       ${(warn || []).map((w) => `<div class="tmm-warn">${esc(w)}</div>`).join('')}
       <div class="tmm-status" id="tmm-status">Filling in the ${btn} box…</div>
       ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}</button>`).join('')}</div>` : ''}
+      ${extras && extras.length ? `<div class="tmm-row">${extras.map((x, i) => `<button class="tmm-plain" data-ex="${i}">${esc(x.long || x.label)}</button>`).join('')}</div>` : ''}
       <div class="tmm-row"><button class="tmm-plain" id="tmm-copy">Copy share count</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
     $('#tmm-x', s).onclick = closeSheet;
+    $$('[data-ex]', s).forEach((b) => (b.onclick = () => extras[Number(b.dataset.ex)].fn()));
     const cur = { shares, price };
     $('#tmm-copy', s).onclick = () => { try { navigator.clipboard.writeText(String(cur.shares)); $('#tmm-copy', s).textContent = 'Copied'; } catch (e) { /* ignore */ } };
     $$('[data-alt]', s).forEach((b) => (b.onclick = () => onAlt(Number(b.dataset.alt))));
@@ -345,7 +388,7 @@
         ? `Couldn't find the ${btn} box. Tap the Owned cell on ${esc(stock.acr)} and type <b>${num(shares)}</b>, or use Copy share count.`
         : `Tap the Owned cell on ${esc(stock.acr)}. The share count fills in when the panel opens.`;
     const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · check the box, tap ${btn}`;
-    if (ok) minimizeSheet(pillText()); // get out of the way of Torn's button
+    if (ok) minimizeSheet(pillText(), extras); // get out of the way of Torn's button
     const guard = async () => {
       if (!filled.input || !sheet || !document.body.contains(status) || !watchTimer) return;
       const inputs = boxInputs(filled.input);
@@ -390,21 +433,22 @@
         status.className = 'tmm-ok';
         status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}.`;
         userMem = null;
-        const needsMore = onDone ? await onDone(cash, status) : false;
-        if (needsMore) { expandSheet(); return; }
+        const next = onDone ? await onDone(cash, status) : false;
+        if (next === true) { expandSheet(); return; }
         const doneSheet = sheet;
-        const left = cash - settings.keepOnHand;
-        const cheapest = cheapestAllowedPrice();
-        const offerDonate = kind === 'cash' && !isSell && left >= 1 && cheapest != null && left < cheapest * (1 + settings.bufferPct / 100);
-        if (doneSheet && doneSheet.style.display === 'none') {
-          showPill(`✓ Bought · cash ${money(cash)}`, 'ok', offerDonate ? { label: `Donate ${money(left)}`, fn: () => startDonation(left) } : null);
-        } else if (offerDonate) {
-          const b = document.createElement('button');
-          b.className = 'tmm-act'; b.textContent = `Donate ${money(left)} to the church`;
-          b.onclick = () => startDonation(left);
-          status.after(b);
+        const doneText = `✓ ${isSell ? 'Sold' : 'Bought'} · cash ${money(cash)}`;
+        if (next && next.extras && next.extras.length) {
+          if (doneSheet && doneSheet.style.display === 'none') showPill(next.text || doneText, 'ok', next.extras);
+          else {
+            const row = document.createElement('div'); row.className = 'tmm-row';
+            next.extras.forEach((x, i) => { const b = document.createElement('button'); b.className = i ? 'tmm-plain' : 'tmm-act'; b.textContent = x.long || x.label; b.onclick = x.fn; row.appendChild(b); });
+            if (next.text) { const d = document.createElement('div'); d.className = 'tmm-sub'; d.textContent = next.text; status.after(d); d.after(row); } else status.after(row);
+          }
+          setTimeout(() => { if (sheet === doneSheet && !watchTimer) closeSheet(); }, 25000);
+        } else {
+          if (doneSheet && doneSheet.style.display === 'none') showPill(doneText, 'ok');
+          setTimeout(() => { if (sheet === doneSheet && !watchTimer) closeSheet(); }, 5000);
         }
-        setTimeout(() => { if (sheet === doneSheet) closeSheet(); }, offerDonate ? 15000 : 5000);
         return;
       }
       const p = domPrice(stock.id);
@@ -453,7 +497,9 @@
       recompute: (p) => isSell
         ? Math.min(o.cap || o.owned, Math.ceil((target * buf) / (p * (1 - FEE))))
         : Math.floor(target / (p * buf)),
-      onDone: (cash, status) => {
+      extras: !isSell && vaultAvailable() ? [{ label: 'Vault instead', long: `Deposit ${money(plan.avail)} to the faction vault instead`, fn: () => startVaultDeposit(plan.avail) }] : null,
+      onDone: async (cash, status) => {
+        if (!isSell) return leftoverNext(job, cash);
         if (isSell && legIdx + 1 < plan.legs.length) {
           const b = document.createElement('button');
           b.className = 'tmm-act'; b.textContent = 'Next sale';
@@ -520,7 +566,10 @@
       if (job && job.action === 'donate' && onChurchPage()) {
         sessionStorage.removeItem(LS + 'pending');
         if (Date.now() - job.t < 10 * 60000) fillDonation(job);
-      } else if (job && job.action !== 'donate' && onStockPage()) {
+      } else if (job && job.action === 'vault' && onFactionPage()) {
+        sessionStorage.removeItem(LS + 'pending');
+        if (Date.now() - job.t < 10 * 60000) setTimeout(() => fillVault(job), 300);
+      } else if (job && job.action !== 'donate' && job.action !== 'vault' && onStockPage()) {
         sessionStorage.removeItem(LS + 'pending');
         if (Date.now() - job.t < 10 * 60000) execute(job);
       }
