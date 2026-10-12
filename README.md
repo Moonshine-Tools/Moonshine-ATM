@@ -79,7 +79,11 @@ Every recommendation is logged. Once its time horizon has passed, the script che
 
 ### Torn PDA (Android / iOS)
 1. In Torn PDA, open the menu → **Settings → Advanced Browser Settings → Manage scripts** and make sure custom user scripts are on.
-2. Tap **+**, choose the **Remote** tab and paste the raw link to `torn-market-manager.user.js` from this repository. Remote install also gets you updates.
+2. Tap **+**, choose the **Remote** tab and paste this link:
+   ```
+   https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
+   ```
+   Remote install also gets you update notices from Torn PDA.
    - Or paste the code in directly. If your phone can't copy it all at once, use the four files in `parts/`, pasting them one after another in order.
 3. Set injection time to **End** if asked, then save.
 4. Open any Torn page. The 🌙 appears on the right edge.
@@ -87,7 +91,12 @@ Every recommendation is logged. Once its time horizon has passed, the script che
 Your API key is filled in automatically by Torn PDA.
 
 ### PC (Tampermonkey / Violentmonkey)
-Install the script from the raw link, then open **Market → Settings** and paste a **Limited Access** API key.
+Open [this link](https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js) and Tampermonkey will offer to install it. Then open **Market → Settings** and paste a **Limited Access** API key.
+
+### Updates
+The script checks GitHub for a newer version every 6 hours. When one is out, the Market panel shows **Update available** with an **Update now** button, and the menu shows *(update)* next to Market. You can also check any time in **Market → Settings → Check for updates**. Your settings and price history are kept when you update.
+
+Tampermonkey also updates the script automatically.
 
 ---
 
@@ -122,6 +131,16 @@ Install the script from the raw link, then open **Market → Settings** and past
 - **Benefits are protected, not valued.** The script never sells shares a benefit needs, but it doesn't put a dollar value on benefits.
 - **No guarantees.** Past patterns may not repeat. If the market has no reliable edge, the honest answer is **No action**, and the script will give it.
 - **Torn's pages can change.** If a box can't be found, the script tells you the number to type and offers a Copy button.
+
+---
+
+## Publishing an update
+
+1. Change the `@version` line at the top of `torn-market-manager.user.js`, for example `2.3.0` → `2.3.1`.
+2. Change `SCRIPT_VERSION` near the top of the code to the same number.
+3. Upload the new file to the `main` branch of this repository.
+
+Everyone running the script will see the update within 6 hours. If the version number isn't raised, nobody is told about the update.
 
 ---
 

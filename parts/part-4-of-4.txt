@@ -1,0 +1,540 @@
+    const rows = Object.values(L).sort((a, b) => ((b.pred ? b.pred.mean : -9) - (a.pred ? a.pred.mean : -9)));
+    for (const x of rows) {
+      html += `<tr><td>${esc(x.s.acr)}</td><td>${x.price.toFixed(2)}</td><td>${Number.isFinite(x.z) ? (x.z >= 0 ? '+' : '') + x.z.toFixed(1) + 'σ' : '—'}</td><td class="${x.pred && x.pred.mean >= 0 ? 'tmm-pos' : 'tmm-neg'}">${x.pred ? pct(x.pred.mean) : '—'}</td><td>${x.owned ? num(x.owned) : ''}</td><td>${x.owned ? num(Math.max(0, x.spare)) : ''}</td></tr>`;
+    }
+    html += `</table></div>`;
+
+    const minN = await DB.count('minute');
+    html += `<h4>Data on this phone</h4><div class="tmm-sub">${num(an.hours)} hourly prices across ${an.nStocks} stocks${Number.isFinite(an.oldest) ? `, back to ${new Date(an.oldest * 1000).toLocaleDateString()}` : ''}. ${num(minN)} minute snapshots (kept 90 days). ${esc(sync.status)}</div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-rerun">Re-run analysis</button><button class="tmm-plain" id="tmm-sync">Download history now</button></div>`;
+    body.innerHTML = html;
+    $('#tmm-rerun', body).onclick = async () => { body.innerHTML = '<div class="tmm-sub">Analyzing…</div>'; await DB.setMeta('validation', null); await analyze(true); showMarket('details'); };
+    $('#tmm-sync', body).onclick = () => { syncHistory(true).then(() => analyze(true)); $('#tmm-sync', body).textContent = 'Downloading… keep Torn open'; };
+  }
+
+  function renderSettings(body) {
+    const pda = !PDA_KEY.includes('#');
+    const f = (id, label, val, ph = '') => `<div class="tmm-field"><label for="${id}">${label}</label><input type="text" id="${id}" value="${esc(val)}" placeholder="${esc(ph)}" autocomplete="off"></div>`;
+    const c = (id, label, on) => `<label class="tmm-check"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`;
+    body.innerHTML = `
+      ${pda ? '<div class="tmm-sub">Using your Torn PDA API key.</div>' : f('s-key', 'Torn API key (Limited Access)', settings.apiKey)}
+      <h4>Cash</h4>
+      ${f('s-keep', 'Keep this much cash on hand after a deposit', short(settings.keepOnHand))}
+      ${f('s-park', 'Parking stock (used while the model is learning)', settings.parkStock, 'e.g. TCI')}
+      ${f('s-ex', 'Never trade these stocks', settings.exclude, 'e.g. WSU, TCB')}
+      ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
+      ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
+      <h4>Recommendations</h4>
+      ${f('s-edge', 'Minimum advantage after fees (%)', settings.minEdgePct)}
+      ${f('s-t', 'Evidence required (how many times bigger than the uncertainty)', settings.evidenceT)}
+      ${f('s-maxw', 'Most of your portfolio in one stock (%)', settings.maxWeightPct)}
+      ${f('s-mint', 'Smallest trade worth suggesting', short(settings.minTrade))}
+      ${c('s-unval', 'Show recommendations even if the model fails its test (not advised)', settings.showUnvalidated)}
+      <h4>Data and display</h4>
+      ${f('s-days', 'Days of history to download', settings.historyDays)}
+      ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
+      <div class="tmm-row"><button class="tmm-plain" id="s-moon">Move the moon back to its default spot</button></div>
+      <h4>Updates</h4>
+      <div class="tmm-sub" id="s-ver">You have v${SCRIPT_VERSION}.${updateConfigured() ? '' : ' Update checks are off until the GitHub link is set in the script.'}</div>
+      <div class="tmm-row">${updateConfigured() ? '<button class="tmm-plain" id="s-chk">Check for updates</button>' : ''}</div>
+      <div class="tmm-row"><button class="tmm-act" id="s-save">Save settings</button></div>`;
+    const chk = $('#s-chk', body);
+    if (chk) chk.onclick = async () => {
+      chk.textContent = 'Checking…';
+      const u = await checkForUpdate(true);
+      const v = $('#s-ver', body);
+      if (u) {
+        v.innerHTML = `Update available: <b>v${esc(u.latest)}</b> (you have v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Update now'; chk.className = 'tmm-act'; chk.onclick = installUpdate;
+      } else {
+        const s = store.get('update', null);
+        v.textContent = s && s.err ? `Couldn't reach GitHub: ${s.err}` : `You have the latest version (v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Check again';
+      }
+    };
+    $('#s-moon', body).onclick = () => { store.set('dock', { edge: 'right', pos: 0.72 }); placeMoon(); };
+    $('#s-save', body).onclick = () => {
+      const g = (id) => $('#' + id, body).value.trim();
+      const n = (id, d, lo, hi) => { const x = parseFloat(g(id)); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+      if (!pda) settings.apiKey = g('s-key');
+      const keep = parseAmount(g('s-keep')); settings.keepOnHand = keep > 0 ? keep : 0;
+      settings.parkStock = g('s-park').toUpperCase();
+      settings.exclude = g('s-ex');
+      settings.bufferPct = n('s-buf', DEFAULTS.bufferPct, 0, 5);
+      settings.depositOwnedOnly = $('#s-own', body).checked;
+      settings.minEdgePct = n('s-edge', DEFAULTS.minEdgePct, 0, 50);
+      settings.evidenceT = n('s-t', DEFAULTS.evidenceT, 0, 10);
+      settings.maxWeightPct = n('s-maxw', DEFAULTS.maxWeightPct, 5, 100);
+      const mt = parseAmount(g('s-mint')); settings.minTrade = mt >= 0 ? mt : DEFAULTS.minTrade;
+      settings.showUnvalidated = $('#s-unval', body).checked;
+      settings.historyDays = Math.round(n('s-days', DEFAULTS.historyDays, 30, 3650));
+      settings.autoOpen = $('#s-open', body).checked;
+      saveSettings();
+      if (A) A.dirty = true;
+      showMarket('overview');
+    };
+  }
+
+  // ------------------------------------------------------------ badges
+  // Orange dot: you're carrying cash. Green dot: there's a trade recommendation.
+  function cashNow() { const c = domCash(); return c != null ? c : userMem ? userMem.cash : null; }
+  function updateCashBadge() {
+    if (!moon) return;
+    const cash = cashNow();
+    const has = cash != null && cash > settings.keepOnHand + 1000;
+    moon.classList.toggle('has-cash', has);
+    const note = $('[data-note="cash"]', root);
+    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
+    moon.setAttribute('aria-label', 'Market manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+  }
+  async function updateBadges() {
+    try {
+      if (!apiKey()) return;
+      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
+      updateCashBadge();
+      if (!userMem) return;
+      const an = await analyze();
+      let has = false;
+      if (an.market && (an.validated || settings.showUnvalidated)) {
+        const { rot } = findOpportunity(an, userMem, cashNow() ?? userMem.cash);
+        const skip = store.get('skip', null);
+        has = !!rot && !(skip && skip.k === rot.sell + '>' + rot.buy && Date.now() < skip.until);
+      }
+      if (moon) moon.classList.toggle('has-opp', has);
+      const note = $('[data-note="opp"]', root);
+      if (note) note.textContent = has ? '(trade idea)' : updateInfo() ? '(update)' : '';
+      updateCashBadge();
+    } catch (e) { /* ignore */ }
+  }
+
+  // ------------------------------------------------------------ withdraw input
+  function askWithdraw() {
+    const recent = [...new Set([...store.get('recent', []), 1e6, 5e6, 10e6, 25e6])].slice(0, 6);
+    const s = openSheet(`
+      <h3>How much cash do you need?</h3>
+      <input class="tmm-input" id="tmm-amt" inputmode="decimal" placeholder="e.g. 5m, 750k, 1.2b" autocomplete="off">
+      <div class="tmm-row">${recent.map((a) => `<button class="tmm-chip" data-amt="${a}">${short(a)}</button>`).join('')}</div>
+      <div class="tmm-err" id="tmm-amt-err" hidden></div>
+      <div class="tmm-row"><button class="tmm-act" id="tmm-go">Find shares to sell</button><button class="tmm-plain" id="tmm-x">Cancel</button></div>`);
+    const inp = $('#tmm-amt', s);
+    setTimeout(() => inp.focus(), 50);
+    const go = (v) => {
+      const amt = parseAmount(v);
+      if (!(amt > 0)) { const e = $('#tmm-amt-err', s); e.hidden = false; e.textContent = 'Enter an amount like 5m, 750k or 2500000.'; return; }
+      store.set('recent', [amt, ...store.get('recent', []).filter((x) => x !== amt)].slice(0, 3));
+      runJob({ action: 'withdraw', amount: amt });
+    };
+    $('#tmm-go', s).onclick = () => go(inp.value);
+    inp.onkeydown = (e) => { if (e.key === 'Enter') go(inp.value); };
+    $$('[data-amt]', s).forEach((b) => (b.onclick = () => go(b.dataset.amt)));
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // ------------------------------------------------------------ trade jobs
+  function runJob(job) {
+    if (!onStockPage()) {
+      sessionStorage.setItem(LS + 'pending', JSON.stringify(Object.assign({ t: Date.now() }, job)));
+      openSheet(`<h3>Opening the stock market…</h3>`);
+      location.href = STOCK_URL;
+      return;
+    }
+    execute(job);
+  }
+
+  function showError(msg) {
+    const s = openSheet(`<h3>Can't do that right now</h3><div class="tmm-err">${esc(msg)}</div><div class="tmm-row"><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  async function execute(job) {
+    openSheet(`<h3>${job.action === 'withdraw' ? 'Withdraw ' + money(job.amount) : job.action === 'deposit' ? 'Deposit' : 'Rotation'}</h3><div class="tmm-sub">Checking prices and your shares…</div>`);
+    try {
+      const rows = await waitFor(() => stockRows().length > 0, 8000);
+      if (!rows) throw new Error("The stock list didn't load. You may be traveling, in hospital or in jail, or Torn changed the page layout.");
+      userMem = null;
+      const [an, user] = await Promise.all([analyze().catch(() => null), getUser(0)]);
+      const market = (an && an.market) || (await getMarket(60));
+      const base = an || { market, preds: {}, model: null, S: {}, h: 24 };
+      if (Date.now() - market.t > 5 * 60000) throw new Error('Price data is stale. Try again in a moment.');
+      if (job.action === 'withdraw') {
+        const plan = planWithdraw(job.amount, base, user);
+        if (plan.error) return showError(plan.error);
+        return showQuick(job, plan, 0, 'sell');
+      }
+      if (job.action === 'deposit') {
+        const cash = domCash() ?? user.cash;
+        const plan = planDeposit(cash, base, user);
+        if (plan.error) {
+          const left = cash - settings.keepOnHand;
+          if (plan.tooSmall && left > 0) return showDonateOffer(left, plan.error);
+          return showError(plan.error);
+        }
+        return showQuick(job, plan, 0, 'buy');
+      }
+      if (job.action === 'rotate') return showRotation(job, base, user);
+    } catch (e) { showError(e.message || String(e)); }
+  }
+
+  // ------------------------------------------------------------ church donation
+  const CHURCH_URL = 'https://www.torn.com/church.php';
+  const onChurchPage = () => /church\.php/i.test(location.href);
+
+  function cheapestAllowedPrice() {
+    const m = marketMem || store.get('market', null);
+    if (!m) return null;
+    const ex = excluded();
+    const park = settings.parkStock.toUpperCase();
+    const owned = userMem ? userMem.owned : {};
+    let best = null;
+    for (const s of Object.values(m.stocks)) {
+      if (ex.includes(s.acr)) continue;
+      if (settings.depositOwnedOnly && !owned[s.id] && s.acr !== park) continue;
+      const p = domPrice(s.id) || s.price;
+      if (p > 0 && (best == null || p < best)) best = p;
+    }
+    return best;
+  }
+
+  function showDonateOffer(left, why) {
+    const s = openSheet(`
+      <h3>Too little to buy a share</h3>
+      <div class="tmm-sub">${esc(why)}</div>
+      <div class="tmm-big">${money(left)} on hand</div>
+      <div class="tmm-sub">Donating it at the church gets it off you so it can't be mugged.</div>
+      <div class="tmm-row"><button class="tmm-act" id="tmm-don">Donate ${money(left)} to the church</button><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
+    $('#tmm-don', s).onclick = () => startDonation(left);
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  function startDonation(amount) {
+    const job = { action: 'donate', amount: Math.floor(amount), t: Date.now() };
+    if (!onChurchPage()) {
+      sessionStorage.setItem(LS + 'pending', JSON.stringify(job));
+      closeSheet();
+      showPill('Opening the church…');
+      location.href = CHURCH_URL + '#church-donate';
+      return;
+    }
+    closeSheet();
+    fillDonation(job);
+  }
+
+  const visibleInput = (i) => !/^(hidden|button|submit|checkbox|radio|image|file)$/i.test(i.type) && i.offsetParent !== null && !i.closest('#tmm-root');
+
+  // The church has tabs "Donate / Ceremony / Pray" and opens on Ceremony.
+  // In the Donate tab, a "Donate" button under the chest reveals the amount
+  // box and Torn's "give" button. We tap the tab and that reveal button only.
+  // We never tap "give" — that's yours.
+  const elText = (el) => (el.textContent || el.value || el.getAttribute('alt') || el.getAttribute('title') || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+  const innermost = (list) => list.filter((el) => !list.some((o) => o !== el && el.contains(o)));
+  function isChurchTab(el) {
+    let p = el.parentElement;
+    for (let d = 0; p && d < 5; d++, p = p.parentElement) {
+      const tx = elText(p);
+      if (/ceremony/i.test(tx) && /pray/i.test(tx) && tx.length < 120) return true;
+    }
+    return false;
+  }
+  function donateCandidates() {
+    return $$('a, li, button, span, div, img, input[type=button], [role=tab], [role=button]').filter((el) =>
+      !el.closest('#tmm-root') && el.offsetParent !== null && /^donate$/i.test(elText(el)));
+  }
+  function findDonateTab() {
+    const tabs = innermost(donateCandidates().filter(isChurchTab));
+    return tabs[0] || null;
+  }
+  function findRevealButton() {
+    const btns = innermost(donateCandidates().filter((el) => !isChurchTab(el) && !/give/i.test(elText(el))));
+    return btns[0] || null;
+  }
+  async function openDonateBox() {
+    if (findDonateInput()) return true;
+    const tab = await waitFor(findDonateTab, 5000);
+    if (tab) {
+      tab.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      await sleep(250);
+      try { tab.click(); } catch (e) { /* ignore */ }
+    }
+    if (await waitFor(findDonateInput, 800)) return true;
+    const reveal = await waitFor(findRevealButton, 4000);
+    if (reveal) {
+      reveal.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      await sleep(250);
+      try { reveal.click(); } catch (e) { /* ignore */ }
+    }
+    return !!(await waitFor(findDonateInput, 4000));
+  }
+
+  // Finds the church's donation box. Never presses Torn's Donate button.
+  function findDonateInput() {
+    // 1) Inside the Donate tab's own panel.
+    const panels = [document.getElementById('church-donate'), ...$$("[id*='donate' i], [class*='donate' i]")]
+      .filter((el) => el && !el.closest('#tmm-root') && el.offsetParent !== null);
+    for (const pnl of panels) {
+      const inp = $$('input', pnl).find(visibleInput);
+      if (inp) return inp;
+    }
+    // 2) A visible box that sits next to a real Donate button (not the tab link).
+    const isDonateBtn = (el) => el.tagName !== 'A' && /donat/i.test((el.textContent || el.value || '').trim());
+    for (const inp of $$('input').filter(visibleInput)) {
+      let el = inp.parentElement;
+      for (let d = 0; el && d < 4; d++, el = el.parentElement) {
+        if ($$("button, input[type='submit'], input[type='button']", el).some(isDonateBtn)) return inp;
+      }
+    }
+    return null;
+  }
+
+  // Minimal: only a small bar at the top showing the amount, never a big panel.
+  async function fillDonation(job) {
+    const cash = domCash();
+    const amount = Math.max(0, Math.floor(Math.min(job.amount, cash != null ? cash : job.amount)));
+    if (amount < 1) { showPill('No cash on hand to donate.'); return; }
+    const copy = { label: 'Copy', fn: () => { try { navigator.clipboard.writeText(String(amount)); updatePill(`Copied ${money(amount)} · paste it in the Donate box`); } catch (e) { /* ignore */ } } };
+    showPill(`Donate ${money(amount)}`, '', copy);
+    await openDonateBox();
+    const input = findDonateInput();
+    if (!pill) return;
+    if (!input) { updatePill(`Open Donate, type ${money(amount)}, tap give`); return; }
+    input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const ok = await typeInto(input, amount);
+    input.classList.add('tmm-filled');
+    setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
+    updatePill(ok ? `${money(amount)} filled in · tap give` : `Type ${money(amount)} in the box, then tap give`);
+    const startCash = domCash();
+    const started = Date.now();
+    watchTimer = setInterval(() => {
+      if (Date.now() - started > 5 * 60000 || !pill) { clearInterval(watchTimer); watchTimer = null; return; }
+      const c = domCash();
+      if (startCash != null && c != null && c < startCash) {
+        clearInterval(watchTimer); watchTimer = null;
+        DB.add('executions', { t: Date.now(), kind: 'donation', action: 'donate', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        showPill(`✓ Donated · cash ${money(c)}`, 'ok');
+        const p0 = pill;
+        setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);
+      }
+    }, 1000);
+  }
+
+  // Generic: show one leg, fill Torn's box, watch for your confirmation.
+  async function showLeg({ title, action, stock, shares, price, lines, warn, alts, onAlt, recompute, onDone, kind }) {
+    const isSell = action === 'sell';
+    const btn = isSell ? 'Sell' : 'Buy';
+    const s = openSheet(`
+      <h3>${esc(title)}</h3>
+      <div class="tmm-big">${btn} ${num(shares)} ${esc(stock.acr)}</div>
+      ${lines.map((l) => `<div class="tmm-sub">${esc(l)}</div>`).join('')}
+      ${(warn || []).map((w) => `<div class="tmm-warn">${esc(w)}</div>`).join('')}
+      <div class="tmm-status" id="tmm-status">Filling in the ${btn} box…</div>
+      ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}</button>`).join('')}</div>` : ''}
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-copy">Copy share count</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    const cur = { shares, price };
+    $('#tmm-copy', s).onclick = () => { try { navigator.clipboard.writeText(String(cur.shares)); $('#tmm-copy', s).textContent = 'Copied'; } catch (e) { /* ignore */ } };
+    $$('[data-alt]', s).forEach((b) => (b.onclick = () => onAlt(Number(b.dataset.alt))));
+    const status = $('#tmm-status', s);
+    const filled = await openAndFill(stock.id, action, shares);
+    const res = filled.res;
+    const ok = res === 'ok';
+    if (!sheet || !document.body.contains(status)) return;
+    status.innerHTML = ok
+      ? `Share count is filled in. Tap Torn's <b>${btn}</b> button in the ${esc(stock.acr)} panel to confirm.`
+      : res === 'unverified'
+        ? `I tried to enter <b>${num(shares)}</b> but Torn's ${btn} box didn't take it. Clear the box and type <b>${num(shares)}</b> yourself, or use Copy share count.`
+        : settings.autoOpen
+        ? `Couldn't find the ${btn} box. Tap the Owned cell on ${esc(stock.acr)} and type <b>${num(shares)}</b>, or use Copy share count.`
+        : `Tap the Owned cell on ${esc(stock.acr)}. The share count fills in when the panel opens.`;
+    const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · check the box, tap ${btn}`;
+    if (ok) minimizeSheet(pillText()); // get out of the way of Torn's button
+    const guard = async () => {
+      if (!filled.input || !sheet || !document.body.contains(status) || !watchTimer) return;
+      const inputs = boxInputs(filled.input);
+      if (boxShows(inputs, cur.shares)) return;
+      if (await typeInto(filled.input, cur.shares)) return;
+      expandSheet();
+      status.innerHTML = `Torn changed the ${btn} box back. Clear it and type <b>${num(cur.shares)}</b> yourself, or use Copy share count.`;
+    };
+    if (ok) { setTimeout(guard, 1200); setTimeout(guard, 3500); }
+    const legRow = findRow(stock.id);
+    let warned = false;
+    const confirmObs = legRow && new MutationObserver(() => {
+      const scope = panelScope(legRow);
+      const n = confirmShares(scope, action);
+      if (n == null) return;
+      if (n !== cur.shares && !warned) {
+        warned = true;
+        expandSheet();
+        status.className = 'tmm-err';
+        status.innerHTML = `STOP — Torn is asking to ${btn.toLowerCase()} <b>${num(n)}</b> shares, not <b>${num(cur.shares)}</b>. Tap <b>No</b> / Cancel in Torn's box, then type <b>${num(cur.shares)}</b> into the ${btn} box yourself.`;
+      } else if (n === cur.shares && warned) {
+        warned = false;
+        status.className = 'tmm-ok';
+        status.innerHTML = `Torn now shows ${num(n)} shares. Correct — tap Torn's confirm.`;
+      }
+    });
+    if (confirmObs) {
+      for (const node of panelScope(legRow)) confirmObs.observe(node, { childList: true, subtree: true, characterData: true });
+      setTimeout(() => confirmObs.disconnect(), 5 * 60000);
+    }
+    const startCash = domCash();
+    const started = Date.now();
+    watchTimer = setInterval(async () => {
+      if (Date.now() - started > 5 * 60000) { clearInterval(watchTimer); watchTimer = null; return; }
+      const cash = domCash();
+      if (startCash != null && cash != null && cash !== startCash) {
+        clearInterval(watchTimer); watchTimer = null;
+        if (confirmObs) confirmObs.disconnect();
+        try {
+          await DB.add('executions', { t: Date.now(), kind, action, sid: stock.id, acr: stock.acr, shares: cur.shares, expectedPrice: cur.price, actualPrice: Math.abs(cash - startCash) / cur.shares / (isSell ? 1 - FEE : 1), cashBefore: startCash, cashAfter: cash });
+        } catch (e) { /* logging is best-effort */ }
+        status.className = 'tmm-ok';
+        status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}.`;
+        userMem = null;
+        const needsMore = onDone ? await onDone(cash, status) : false;
+        if (needsMore) { expandSheet(); return; }
+        const doneSheet = sheet;
+        const left = cash - settings.keepOnHand;
+        const cheapest = cheapestAllowedPrice();
+        const offerDonate = kind === 'cash' && !isSell && left >= 1 && cheapest != null && left < cheapest * (1 + settings.bufferPct / 100);
+        if (doneSheet && doneSheet.style.display === 'none') {
+          showPill(`✓ Bought · cash ${money(cash)}`, 'ok', offerDonate ? { label: `Donate ${money(left)}`, fn: () => startDonation(left) } : null);
+        } else if (offerDonate) {
+          const b = document.createElement('button');
+          b.className = 'tmm-act'; b.textContent = `Donate ${money(left)} to the church`;
+          b.onclick = () => startDonation(left);
+          status.after(b);
+        }
+        setTimeout(() => { if (sheet === doneSheet) closeSheet(); }, offerDonate ? 15000 : 5000);
+        return;
+      }
+      const p = domPrice(stock.id);
+      if (p && Math.abs(p - cur.price) > 1e-9 && recompute) {
+        const ns = recompute(p);
+        cur.price = p;
+        if (ns > 0 && ns !== cur.shares) {
+          cur.shares = ns;
+          const row = findRow(stock.id);
+          const inp = row && findTradeInput(row, action);
+          if (inp) await typeInto(inp, ns);
+          status.innerHTML = `Price moved to $${p.toFixed(2)}. Updated to <b>${num(ns)}</b> shares. Tap Torn's <b>${btn}</b> button to confirm.`;
+          updatePill(`Price moved · ${pillText()}`);
+        }
+      }
+    }, 1500);
+  }
+
+  function showQuick(job, plan, legIdx, action) {
+    const o = plan.legs[legIdx];
+    const isSell = action === 'sell';
+    const buf = 1 + settings.bufferPct / 100;
+    const value = isSell ? o.shares * o.price * (1 - FEE) : o.shares * o.price;
+    const legTag = plan.legs.length > 1 ? ` (sale ${legIdx + 1} of ${plan.legs.length})` : '';
+    const warn = [];
+    if (plan.mode === 'breaks') warn.push(`This sale drops ${o.s.acr} below a benefit block. Pick another stock below to avoid that.`);
+    if (plan.mode === 'split') warn.push('No single stock covers this without breaking a benefit, so it is split into separate sales.');
+    if (!isSell && o.completes) warn.push(`This completes your next ${o.s.acr} benefit block.`);
+    if (!isSell && o.overweight) warn.push(`This puts more than ${settings.maxWeightPct}% of your portfolio in ${o.s.acr}.`);
+    const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
+    showLeg({
+      kind: 'cash',
+      title: isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
+      action, stock: o.s, shares: o.shares, price: o.price,
+      lines: [
+        isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
+        quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
+      ],
+      warn,
+      alts: plan.alts,
+      onAlt: (i) => {
+        const alt = plan.alts[i];
+        const rest = plan.alts.filter((x) => x !== alt).concat([o]);
+        showQuick(job, Object.assign({}, plan, { legs: [alt], alts: rest, mode: alt.breaks ? 'breaks' : plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode }), 0, action);
+      },
+      recompute: (p) => isSell
+        ? Math.min(o.cap || o.owned, Math.ceil((target * buf) / (p * (1 - FEE))))
+        : Math.floor(target / (p * buf)),
+      onDone: (cash, status) => {
+        if (isSell && legIdx + 1 < plan.legs.length) {
+          const b = document.createElement('button');
+          b.className = 'tmm-act'; b.textContent = 'Next sale';
+          b.onclick = () => showQuick(job, plan, legIdx + 1, action);
+          status.after(b);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
+  function showRotation(job, an, user) {
+    const m = an.market.stocks;
+    const sellS = m[job.sell], buyS = m[job.buy];
+    if (!sellS || !buyS) return showError('One of the stocks in this recommendation no longer exists.');
+    const buf = 1 + settings.bufferPct / 100;
+    const goBuy = () => {
+      const cash = domCash() ?? 0;
+      const price = domPrice(buyS.id) || buyS.price;
+      const avail = cash - settings.keepOnHand;
+      const shares = Math.floor(avail / (price * buf));
+      if (shares < 1) return showError(`Not enough cash on hand to buy ${buyS.acr}.`);
+      showLeg({
+        kind: 'rotation', title: 'Rotation, step 2 of 2', action: 'buy', stock: buyS, shares, price,
+        lines: [`Uses about ${money(shares * price)} of your ${money(cash)} cash.`],
+        recompute: (p) => Math.floor(avail / (p * buf)),
+        onDone: async () => {
+          const d = await DB.get('decisions', job.decisionId);
+          if (d) { d.status = 'executed'; await DB.put('decisions', d); }
+        },
+      });
+    };
+    if (job.stage === 'buy') return goBuy();
+    const owned = user.owned[sellS.id] || 0;
+    const spare = owned - Core.protectedShares(sellS.benefit, owned);
+    const shares = Math.min(job.shares, spare);
+    if (shares < 1) return showError(`You no longer have spare ${sellS.acr} shares to sell.`);
+    const price = domPrice(sellS.id) || sellS.price;
+    showLeg({
+      kind: 'rotation', title: 'Rotation, step 1 of 2', action: 'sell', stock: sellS, shares, price,
+      lines: [`About ${money(shares * price * (1 - FEE))} after the 0.1% fee. Next you'll buy ${buyS.acr}.`],
+      onDone: (cash, status) => {
+        sessionStorage.setItem(LS + 'pending', JSON.stringify(Object.assign({}, job, { stage: 'buy', t: Date.now() })));
+        const b = document.createElement('button');
+        b.className = 'tmm-act'; b.textContent = `Confirm buy ${buyS.acr}`;
+        b.onclick = () => { sessionStorage.removeItem(LS + 'pending'); goBuy(); };
+        status.after(b);
+        return true;
+      },
+    });
+  }
+
+  // =====================================================================
+  //  BOOT
+  // =====================================================================
+  function boot() {
+    if (!document.body) return setTimeout(boot, 200);
+    mountUI();
+    const raw = sessionStorage.getItem(LS + 'pending');
+    if (raw) {
+      let job = null;
+      try { job = JSON.parse(raw); } catch (e) { /* ignore */ }
+      if (job && job.action === 'donate' && onChurchPage()) {
+        sessionStorage.removeItem(LS + 'pending');
+        if (Date.now() - job.t < 10 * 60000) fillDonation(job);
+      } else if (job && job.action !== 'donate' && onStockPage()) {
+        sessionStorage.removeItem(LS + 'pending');
+        if (Date.now() - job.t < 10 * 60000) execute(job);
+      }
+    }
+    if (!window.indexedDB) return;
+    updateCashBadge();
+    const um = document.getElementById('user-money');
+    if (um) new MutationObserver(updateCashBadge).observe(um, { attributes: true, childList: true, characterData: true, subtree: true });
+    setInterval(updateCashBadge, 15000);
+    collectTick();
+    setInterval(collectTick, 60000);
+    setTimeout(updateBadges, 3000);
+    setInterval(updateBadges, 60000);
+    setTimeout(() => { checkForUpdate().then(updateBadges).catch(() => {}); }, 8000);
+  }
+  boot();
+})();

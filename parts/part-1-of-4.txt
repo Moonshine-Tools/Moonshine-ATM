@@ -1,0 +1,625 @@
+// ==UserScript==
+// @name         Torn Market Manager (all-in-one)
+// @namespace    torn-market-manager
+// @version      2.3.0
+// @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
+// @match        https://www.torn.com/*
+// @grant        GM_xmlhttpRequest
+// @connect      tornsy.com
+// @connect      api.torn.com
+// @connect      raw.githubusercontent.com
+// @updateURL    https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
+// @downloadURL  https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
+// @run-at       document-end
+// ==/UserScript==
+
+/*
+ * WHAT THIS DOES
+ *  - Collects prices: official Torn API every minute while Torn is open (raw
+ *    snapshots kept 90 days, rolled into hourly history forever), plus years of
+ *    hourly history from tornsy.com (public, no key). Stored on your phone.
+ *  - Learns each stock's "personality": how far it is from its normal price
+ *    (in its own standard deviations) and what historically happened next.
+ *    The ranges come from the data, not fixed rules. Each stock's own history
+ *    is blended with market-wide history when it has few examples.
+ *  - Tests itself: trains on the first 70% of history and tests on the last
+ *    30% against buy-and-hold, momentum and simple mean reversion, across
+ *    several settings. If it doesn't pass, it shows NO ACTION.
+ *  - Recommends one SELL A -> BUY B rotation at a time, sized by evidence, net
+ *    of the 0.1% fee, never selling shares that hold a benefit block.
+ *  - Withdraw / Deposit use the same rankings: withdraw sells the stock with the
+ *    weakest outlook, deposit buys the strongest (falls back to simple rules
+ *    while the model is still learning).
+ *  - Logs every recommendation and checks what actually happened.
+ *
+ * RULES COMPLIANCE
+ *  - Never presses Torn's Buy, Sell, Confirm or Yes buttons and never sends a
+ *    trade request. It only opens the stock's panel and types the share count.
+ *  - Torn API use is read-only.
+ */
+
+(function () {
+  'use strict';
+  // =====================================================================
+  //  CORE ANALYTICS (pure functions, no browser APIs — unit-testable)
+  // =====================================================================
+  const Core = (() => {
+    const HOUR = 3600;
+    const FEE = 0.001;
+    const SPAN = 168;          // EMA span in hours (7 days) for "normal price"
+    const WARMUP = SPAN * 2;   // hours before z-scores are trusted
+    const QS = [0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95]; // z-bin edges (learned quantiles)
+    const SHRINK_K = 10;       // effective samples needed before a stock's own data outweighs the pooled market
+    const POOL_DEP = 4;
+    const VAL_VER = 2;         // bump when pass/fail rules change        // stocks move together, so pooled samples count for less
+
+    // rows: [{t (unix sec, hour-aligned), c (close)}] sorted by t
+    function dense(rows) {
+      if (!rows || rows.length < 2) return null;
+      const t0 = rows[0].t, t1 = rows[rows.length - 1].t;
+      const n = Math.round((t1 - t0) / HOUR) + 1;
+      const lp = new Float64Array(n);
+      let j = 0, last = Math.log(rows[0].c);
+      for (let i = 0; i < n; i++) {
+        const t = t0 + i * HOUR;
+        while (j < rows.length && rows[j].t <= t) { if (rows[j].c > 0) last = Math.log(rows[j].c); j++; }
+        lp[i] = last;
+      }
+      return { t0, n, lp };
+    }
+
+    // Causal features: z at i uses only lp[0..i].
+    function features(lp) {
+      const a = 2 / (SPAN + 1), n = lp.length;
+      const z = new Float64Array(n).fill(NaN);
+      const vol = new Float64Array(n).fill(NaN);
+      let m = lp[0], v = 0, vr = 0;
+      for (let i = 1; i < n; i++) {
+        const d = lp[i] - m;
+        if (i >= WARMUP && v > 0) z[i] = d / Math.sqrt(v);
+        const r = lp[i] - lp[i - 1];
+        vr = (1 - a) * vr + a * r * r;
+        if (i >= SPAN) vol[i] = Math.sqrt(vr);
+        v = (1 - a) * v + a * d * d;
+        m = (1 - a) * m + a * lp[i];
+      }
+      return { z, vol };
+    }
+
+    function prepare(rowsBySid) {
+      const S = {};
+      for (const [sid, rows] of Object.entries(rowsBySid)) {
+        const d = dense(rows);
+        if (!d || d.n < WARMUP + 48) continue;
+        Object.assign(d, features(d.lp));
+        S[sid] = d;
+      }
+      return S;
+    }
+
+    const idxAt = (s, t) => { const i = Math.round((t - s.t0) / HOUR); return i >= 0 && i < s.n ? i : -1; };
+
+    function binOf(z, edges) { let b = 0; while (b < edges.length && z > edges[b]) b++; return b; }
+
+    function quantiles(vals, qs) {
+      const s = Float64Array.from(vals).sort();
+      return qs.map((q) => s[Math.floor(q * (s.length - 1))]);
+    }
+
+    const newBin = () => ({ n: 0, s: 0, ss: 0, w: 0 });
+
+    // Learn E[forward log return | z-bin] per stock and pooled.
+    // Only uses samples whose forward window ends before tCut (no leakage).
+    function fit(S, horizons, tCut = Infinity) {
+      const zs = [];
+      for (const s of Object.values(S)) {
+        for (let i = WARMUP; i < s.n; i += 6) {
+          if (s.t0 + i * HOUR >= tCut) break;
+          if (Number.isFinite(s.z[i])) zs.push(s.z[i]);
+        }
+      }
+      if (zs.length < 200) return null;
+      const edges = quantiles(zs, QS);
+      const stats = {};
+      for (const h of horizons) {
+        const pooled = Array.from({ length: QS.length + 1 }, newBin);
+        const per = {};
+        for (const [sid, s] of Object.entries(S)) {
+          const bins = Array.from({ length: QS.length + 1 }, newBin);
+          for (let i = WARMUP; i + h < s.n; i++) {
+            if (s.t0 + (i + h) * HOUR >= tCut) break;
+            const z = s.z[i];
+            if (!Number.isFinite(z)) continue;
+            const r = s.lp[i + h] - s.lp[i];
+            const b = binOf(z, edges);
+            for (const x of [bins[b], pooled[b]]) { x.n++; x.s += r; x.ss += r * r; if (r > 0) x.w++; }
+          }
+          per[sid] = bins;
+        }
+        stats[h] = { pooled, per };
+      }
+      return { edges, horizons, stats, tCut };
+    }
+
+    function binStats(x, h, dep = 1) {
+      if (!x || x.n < 2) return null;
+      const mean = x.s / x.n;
+      const varr = Math.max(1e-10, x.ss / x.n - mean * mean);
+      const neff = Math.max(1, x.n / h / dep);
+      return { mean, var: varr, neff, se: Math.sqrt(varr / neff), win: x.w / x.n, n: x.n };
+    }
+
+    // Shrunk prediction: stock's own bin history blended toward the pooled bin.
+    function predict(model, sid, z, h) {
+      if (!model || !Number.isFinite(z)) return null;
+      const b = binOf(z, model.edges);
+      const st = model.stats[h];
+      const p = binStats(st.pooled[b], h, POOL_DEP);
+      const s = binStats(st.per[sid] && st.per[sid][b], h);
+      if (!p) return null;
+      const w = s ? s.neff / (s.neff + SHRINK_K) : 0;
+      const mean = w * (s ? s.mean : 0) + (1 - w) * p.mean;
+      const se = Math.sqrt((w * (s ? s.se : 0)) ** 2 + ((1 - w) * p.se) ** 2);
+      return {
+        mean, se, bin: b, w,
+        lo: b === 0 ? -Infinity : model.edges[b - 1], hi: b === model.edges.length ? Infinity : model.edges[b],
+        win: s ? s.win : p.win, nStock: s ? s.n : 0, neffStock: s ? s.neff : 0, nPool: p.n,
+      };
+    }
+
+    function range(S) {
+      let a = Infinity, b = -Infinity;
+      for (const s of Object.values(S)) { a = Math.min(a, s.t0); b = Math.max(b, s.t0 + (s.n - 1) * HOUR); }
+      return [a, b];
+    }
+
+    // Out-of-sample information coefficient: does the model rank stocks correctly?
+    function evaluateIC(S, model, h, tStart, tEnd) {
+      const ics = [];
+      for (let t = tStart; t + h * HOUR <= tEnd; t += h * HOUR) {
+        const P = [], R = [];
+        for (const [sid, s] of Object.entries(S)) {
+          const i = idxAt(s, t);
+          if (i < 0 || i + h >= s.n) continue;
+          const p = predict(model, sid, s.z[i], h);
+          if (!p) continue;
+          P.push(p.mean); R.push(s.lp[i + h] - s.lp[i]);
+        }
+        if (P.length < 5) continue;
+        const c = corr(P, R);
+        if (Number.isFinite(c)) ics.push(c);
+      }
+      if (ics.length < 3) return { n: ics.length, mean: NaN, t: NaN };
+      const m = ics.reduce((a, b) => a + b, 0) / ics.length;
+      const sd = Math.sqrt(ics.reduce((a, b) => a + (b - m) ** 2, 0) / (ics.length - 1)) || 1e-9;
+      return { n: ics.length, mean: m, t: (m / sd) * Math.sqrt(ics.length) };
+    }
+
+    function corr(a, b) {
+      const n = a.length, ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n;
+      let sab = 0, saa = 0, sbb = 0;
+      for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; sab += x * y; saa += x * x; sbb += y * y; }
+      return sab / Math.sqrt(saa * sbb);
+    }
+
+    // Portfolio backtest from tStart to tEnd, daily decisions, fees on every sale.
+    // strategy: 'bh' | 'mom' | 'mr' | 'model'
+    function backtest(S, model, o) {
+      const { strategy, tStart, tEnd, K = 5, minEdge = 0.0025, h = 24 } = o;
+      const step = Math.min(h, 24) * HOUR;
+      const sids = Object.keys(S);
+      const price = (sid, t) => { const s = S[sid]; let i = idxAt(s, t); if (i < 0) i = t < s.t0 ? -1 : s.n - 1; return i < 0 ? NaN : Math.exp(s.lp[i]); };
+      const avail = (t) => sids.filter((sid) => { const s = S[sid], i = idxAt(s, t); return i >= SPAN && i < s.n - 1 && (strategy !== 'model' || Number.isFinite(s.z[i])); });
+      const score = (sid, t) => {
+        const s = S[sid], i = idxAt(s, t);
+        if (strategy === 'mom') return s.lp[i] - s.lp[i - SPAN];
+        if (strategy === 'mr') return -(s.lp[i] - s.lp[i - SPAN]);
+        if (strategy === 'model') { const p = predict(model, sid, s.z[i], h); return p ? p.mean : NaN; }
+        return 0;
+      };
+      let units = {}, fees = 0, trades = 0, peak = 1, maxDD = 0, value = 1;
+      const val = (t) => Object.entries(units).reduce((a, [sid, u]) => a + (Number.isFinite(price(sid, t)) ? u * price(sid, t) : 0), 0);
+      // initial allocation
+      const a0 = avail(tStart);
+      if (a0.length < K) return null;
+      const pick0 = strategy === 'bh' ? a0 : a0.map((sid) => [sid, score(sid, tStart)]).filter((x) => Number.isFinite(x[1])).sort((a, b) => b[1] - a[1]).slice(0, K).map((x) => x[0]);
+      for (const sid of pick0) units[sid] = (1 / pick0.length) / price(sid, tStart);
+      let days = 0, held = 0;
+      for (let t = tStart + step; t <= tEnd; t += step) {
+        value = val(t);
+        peak = Math.max(peak, value); maxDD = Math.max(maxDD, 1 - value / peak);
+        if (strategy === 'bh') continue;
+        const av = avail(t);
+        const sc = {}; for (const sid of av) sc[sid] = score(sid, t);
+        const ranked = av.filter((s) => Number.isFinite(sc[s])).sort((a, b) => sc[b] - sc[a]);
+        const top = new Set(ranked.slice(0, K));
+        for (const sid of Object.keys(units)) {
+          if (top.has(sid) || !Number.isFinite(sc[sid])) continue;
+          const cand = ranked.find((c) => !units[c]);
+          if (!cand) break;
+          const edge = strategy === 'model' ? sc[cand] - sc[sid] : Infinity;
+          if (edge <= FEE + minEdge) continue;
+          const v = units[sid] * price(sid, t);
+          fees += v * FEE; trades++;
+          delete units[sid];
+          units[cand] = (v * (1 - FEE)) / price(cand, t);
+        }
+        days++; held += Object.keys(units).length;
+      }
+      return { ret: value - 1, maxDD, trades, fees, days };
+    }
+
+    // Full validation: 70% train / 30% out-of-sample test.
+    function validate(S, horizons = [6, 24, 168]) {
+      const [a, b] = range(S);
+      const span = (b - a) / HOUR;
+      if (span < WARMUP + 24 * 60) return { ok: false, reason: `Need about ${Math.ceil((WARMUP + 24 * 60) / 24)} days of history; have ${Math.floor(span / 24)}.` };
+      const tCut = a + Math.floor((a + (b - a) * 0.7 - a) / HOUR) * HOUR;
+      const model = fit(S, horizons, tCut);
+      if (!model) return { ok: false, reason: 'Not enough data to fit the model.' };
+      const res = { tCut, tEnd: b, testDays: Math.round((b - tCut) / 86400), horizons: {} };
+      for (const h of horizons) {
+        const ic = evaluateIC(S, model, h, tCut, b - h * HOUR);
+        const bt = {};
+        for (const st of ['bh', 'mom', 'mr', 'model']) bt[st] = backtest(S, model, { strategy: st, tStart: tCut, tEnd: b, h });
+        let robust = 0, tried = 0;
+        for (const K of [3, 5, 8]) for (const me of [0.001, 0.0025, 0.005]) {
+          const r = backtest(S, model, { strategy: 'model', tStart: tCut, tEnd: b, h, K, minEdge: me });
+          if (r && bt.bh) { tried++; if (r.ret > bt.bh.ret) robust++; }
+        }
+        const beatsBH = bt.model && bt.bh && bt.model.ret > bt.bh.ret;
+        // Pass: real ranking skill (t > 1.5), beats buy-and-hold after fees, and
+        // still beats it in at least 5 of 9 different settings (not a lucky fluke).
+        const passed = Number.isFinite(ic.t) && ic.t > 1.5 && beatsBH && tried > 0 && robust / tried >= 5 / 9;
+        res.horizons[h] = { ic, bt, robust, tried, passed };
+      }
+      const best = horizons.map((h) => [h, res.horizons[h]]).sort((x, y) => (y[1].passed - x[1].passed) || ((y[1].ic.t || -99) - (x[1].ic.t || -99)))[0];
+      res.h = best[0];
+      res.ok = best[1].passed;
+      res.reason = res.ok ? '' : 'The model did not beat buy-and-hold reliably on data it had not seen.';
+      res.ver = VAL_VER;
+      return res;
+    }
+
+    // Market regime: current average volatility vs its own history.
+    function regime(S) {
+      const [a, b] = range(S);
+      const series = [];
+      for (let t = a + SPAN * HOUR; t <= b; t += 24 * HOUR) {
+        let sum = 0, k = 0, zsum = 0, zk = 0;
+        for (const s of Object.values(S)) {
+          const i = idxAt(s, t); if (i < 0) continue;
+          if (Number.isFinite(s.vol[i])) { sum += s.vol[i]; k++; }
+          if (Number.isFinite(s.z[i])) { zsum += s.z[i]; zk++; }
+        }
+        if (k) series.push({ v: sum / k, z: zk ? zsum / zk : 0 });
+      }
+      if (series.length < 10) return null;
+      const cur = series[series.length - 1];
+      const pct = series.filter((x) => x.v <= cur.v).length / series.length;
+      const label = pct > 0.85 ? 'high volatility' : pct < 0.15 ? 'low volatility' : 'normal volatility';
+      const broad = cur.z < -1 ? ', broad decline' : cur.z > 1 ? ', broad rally' : '';
+      return { pct, label: label + broad, avgZ: cur.z };
+    }
+
+    // ---- live decisions ------------------------------------------------
+    function protectedShares(benefit, owned) {
+      const req = benefit && Number(benefit.requirement);
+      if (!req) return 0;
+      if (String(benefit.type).toLowerCase() === 'passive') return owned >= req ? req : 0;
+      let total = 0, k = 0;
+      while (k < 30 && total + req * 2 ** k <= owned) { total += req * 2 ** k; k++; }
+      return total;
+    }
+    function nextBlockTarget(benefit, owned) {
+      const req = benefit && Number(benefit.requirement);
+      if (!req) return null;
+      if (String(benefit.type).toLowerCase() === 'passive') return owned >= req ? null : req;
+      let total = 0, k = 0;
+      while (k < 30 && total + req * 2 ** k <= owned) { total += req * 2 ** k; k++; }
+      return total + req * 2 ** k;
+    }
+
+    // Best single SELL A -> BUY B rotation, or null.
+    // stocks: {sid:{price, owned, spare, pred:{mean,se}, allowed}}
+    function bestRotation(stocks, o) {
+      const { totalValue, minEdge = 0.0025, tMin = 1.2, maxWeight = 0.4, minTrade = 250000 } = o;
+      let best = null;
+      for (const [a, A] of Object.entries(stocks)) {
+        if (!A.allowed || A.spare <= 0 || !A.pred) continue;
+        const spareVal = A.spare * A.price;
+        for (const [b, B] of Object.entries(stocks)) {
+          if (a === b || !B.allowed || !B.pred) continue;
+          const adv = B.pred.mean - A.pred.mean - FEE;
+          const se = Math.sqrt(A.pred.se ** 2 + B.pred.se ** 2) || 1e-9;
+          const t = adv / se;
+          if (adv <= minEdge || t <= tMin) continue;
+          const frac = Math.min(1, Math.max(0.15, (t - tMin) / 3));
+          const room = maxWeight * totalValue - B.owned * B.price;
+          const amount = Math.min(frac * spareVal, room);
+          if (amount < minTrade) continue;
+          const gain = adv * amount;
+          if (!best || gain > best.gain) best = { sell: a, buy: b, amount, adv, t, se, gain, sellShares: Math.min(A.spare, Math.ceil(amount / A.price)) };
+        }
+      }
+      return best;
+    }
+
+    return { VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
+  })();
+
+  if (typeof window === 'undefined') { if (typeof module !== 'undefined') module.exports = Core; return; }
+  if (window.__tmmLoaded) return;
+  window.__tmmLoaded = true;
+
+  // =====================================================================
+  //  CONFIG & SMALL HELPERS
+  // =====================================================================
+  const PDA_KEY = '###PDA-APIKEY###'; // Torn PDA fills this in
+  const STOCK_URL = 'https://www.torn.com/page.php?sid=stocks';
+  const LS = 'tmm_';
+  const MODEL_VERSION = 'zbin-ensemble v1';
+
+  // ---- Updates --------------------------------------------------------
+  // To publish an update: change the @version line at the top AND this
+  // number to the same new value, then push the file to GitHub.
+  const SCRIPT_VERSION = '2.3.0';
+  const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js';
+  const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
+  const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
+  const FEE = Core.FEE;
+
+  const DEFAULTS = {
+    apiKey: '',
+    keepOnHand: 0,
+    bufferPct: 0.25,
+    parkStock: '',
+    exclude: '',
+    depositOwnedOnly: false,
+    autoOpen: true,
+    historyDays: 730,
+    minEdgePct: 0.25,
+    evidenceT: 1.2,
+    maxWeightPct: 40,
+    minTrade: 250000,
+    showUnvalidated: false,
+  };
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
+  };
+  const SETTINGS_VER = 2;
+  let settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
+  if ((settings.ver || 1) < SETTINGS_VER) {
+    // v2: trade more often for smaller gains. Reset the trade thresholds once.
+    for (const k of ['minEdgePct', 'evidenceT', 'minTrade']) settings[k] = DEFAULTS[k];
+    settings.ver = SETTINGS_VER;
+    try { localStorage.setItem(LS + 'settings', JSON.stringify(settings)); } catch (e) { /* ignore */ }
+  }
+  const saveSettings = () => store.set('settings', settings);
+
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const yieldUI = () => new Promise((r) => setTimeout(r, 0));
+  const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+  const num = (n) => Math.round(n).toLocaleString('en-US');
+  const pct = (logR, d = 2) => { const x = Math.expm1(logR) * 100; return (x >= 0 ? '+' : '') + x.toFixed(d) + '%'; };
+  const pctPlain = (x, d = 1) => (x >= 0 ? '+' : '') + (x * 100).toFixed(d) + '%';
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const excluded = () => settings.exclude.toUpperCase().split(/[\s,]+/).filter(Boolean);
+  const onStockPage = () => /sid=stocks/i.test(location.href);
+  const hourStart = (sec) => sec - (sec % 3600);
+  const hLabel = (h) => (h === 24 ? '1-day' : h === 168 ? '7-day' : h === 6 ? '6-hour' : `${h}-hour`);
+  const short = (n) => n >= 1e9 ? +(n / 1e9).toFixed(2) + 'b' : n >= 1e6 ? +(n / 1e6).toFixed(2) + 'm' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n);
+
+  function parseAmount(str) {
+    if (str == null) return NaN;
+    const s = String(str).trim().toLowerCase().replace(/[$,\s]/g, '');
+    const m = s.match(/^(\d*\.?\d+)([kmb]?)$/);
+    if (!m) return NaN;
+    return Math.round(parseFloat(m[1]) * { '': 1, k: 1e3, m: 1e6, b: 1e9 }[m[2]]);
+  }
+
+  async function waitFor(fn, timeout = 5000, step = 150) {
+    const end = Date.now() + timeout;
+    while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(step); }
+    return null;
+  }
+
+  // =====================================================================
+  //  NETWORK
+  // =====================================================================
+  function apiKey() { return PDA_KEY.includes('#') ? settings.apiKey.trim() : PDA_KEY; }
+
+  async function api(path) {
+    const key = apiKey();
+    if (!key) throw new Error('No API key. Open Market → Settings and add a Limited Access key.');
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await fetch(`https://api.torn.com/${path}${sep}key=${encodeURIComponent(key)}&comment=MarketMgr`);
+    if (!res.ok) throw new Error(`Torn API returned HTTP ${res.status}.`);
+    const j = await res.json();
+    if (j.error) throw new Error(`Torn API error: ${j.error.error || j.error.code}`);
+    return j;
+  }
+
+  // Cross-origin GET for tornsy.com (public historical stock data).
+  async function httpGetText(url) {
+    if (typeof PDA_httpGet === 'function') {
+      const r = await PDA_httpGet(url, {});
+      if (typeof r === 'string') return r;
+      if (r && r.responseText != null) return r.responseText;
+      if (r && typeof r.text === 'function') return String(await r.text());
+      return (r && r.body) || '';
+    }
+    if (typeof GM_xmlhttpRequest === 'function') {
+      return new Promise((res, rej) => GM_xmlhttpRequest({
+        method: 'GET', url, timeout: 20000,
+        onload: (r) => res(r.responseText || ''),
+        onerror: () => rej(new Error('Network error')), ontimeout: () => rej(new Error('Timeout')),
+      }));
+    }
+    const r = await fetch(url);
+    return r.text();
+  }
+  async function httpGetJSON(url) { return JSON.parse(await httpGetText(url)); }
+
+  // ---- update check -----------------------------------------------------
+  const cmpVer = (a, b) => {
+    const x = String(a).split('.').map((n) => parseInt(n, 10) || 0), y = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
+    return 0;
+  };
+  const updateInfo = () => {
+    const u = store.get('update', null);
+    return u && cmpVer(u.latest, SCRIPT_VERSION) > 0 ? u : null;
+  };
+  // Reads only the @version line of the file on GitHub. Checks at most every 6 hours.
+  async function checkForUpdate(force = false) {
+    if (!updateConfigured()) return null;
+    const u = store.get('update', null);
+    if (!force && u && Date.now() - u.checked < 6 * 3600000) return updateInfo();
+    try {
+      const txt = await httpGetText(UPDATE_URL + '?t=' + Date.now());
+      const m = txt.match(/@version\s+([\d.]+)/);
+      if (m) store.set('update', { latest: m[1], checked: Date.now() });
+    } catch (e) { store.set('update', Object.assign({}, u || {}, { checked: Date.now(), err: String(e.message || e) })); }
+    return updateInfo();
+  }
+  function installUpdate() {
+    // Torn PDA and Tampermonkey both recognise a .user.js link and offer to install it.
+    location.href = UPDATE_URL + '?t=' + Date.now();
+  }
+
+  // =====================================================================
+  //  DATABASE (IndexedDB, on your phone)
+  // =====================================================================
+  const DB = (() => {
+    let dbp = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise((res, rej) => {
+        const r = indexedDB.open('torn_market_mgr', 1);
+        r.onupgradeneeded = () => {
+          const d = r.result;
+          d.createObjectStore('hourly', { keyPath: 'sid' });          // per stock: {sid, acr, t:[], c:[]}
+          d.createObjectStore('minute', { keyPath: 't' });           // raw: {t, p:{sid:price}}
+          d.createObjectStore('meta', { keyPath: 'k' });
+          d.createObjectStore('decisions', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('executions', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('snapshots', { keyPath: 't' });
+        };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      return dbp;
+    }
+    const p = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    async function tx(name, mode, fn) {
+      const d = await open();
+      const t = d.transaction(name, mode);
+      const out = fn(t.objectStore(name));
+      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+      return out instanceof Promise ? out : out;
+    }
+    return {
+      get: (n, k) => tx(n, 'readonly', (s) => p(s.get(k))),
+      put: (n, v) => tx(n, 'readwrite', (s) => p(s.put(v))),
+      add: (n, v) => tx(n, 'readwrite', (s) => p(s.add(v))),
+      all: (n, range) => tx(n, 'readonly', (s) => p(s.getAll(range))),
+      count: (n) => tx(n, 'readonly', (s) => p(s.count())),
+      delBelow: (n, k) => tx(n, 'readwrite', (s) => p(s.delete(IDBKeyRange.upperBound(k, true)))),
+      clear: (n) => tx(n, 'readwrite', (s) => p(s.clear())),
+      async meta(k, d = null) { const r = await this.get('meta', k); return r ? r.v : d; },
+      setMeta(k, v) { return this.put('meta', { k, v }); },
+    };
+  })();
+
+  function mergeSeries(rec, points) {
+    const m = new Map();
+    for (let i = 0; i < rec.t.length; i++) m.set(rec.t[i], rec.c[i]);
+    for (const [t, c] of points) if (c > 0) m.set(t, c);
+    const ts = Array.from(m.keys()).sort((a, b) => a - b);
+    rec.t = ts; rec.c = ts.map((t) => m.get(t));
+    return rec;
+  }
+
+  // =====================================================================
+  //  TORN DATA
+  // =====================================================================
+  let marketMem = null;
+  async function getMarket(maxAgeSec = 60) {
+    const cached = marketMem || store.get('market', null);
+    if (cached && Date.now() - cached.t < maxAgeSec * 1000) return (marketMem = cached);
+    const j = await api('torn/?selections=stocks');
+    const stocks = {};
+    for (const [id, s] of Object.entries(j.stocks || {})) {
+      stocks[id] = { id: String(s.stock_id || id), acr: s.acronym, name: s.name, price: Number(s.current_price), cap: Number(s.market_cap) || 0, benefit: s.benefit || null };
+    }
+    marketMem = { t: Date.now(), stocks };
+    store.set('market', marketMem);
+    return marketMem;
+  }
+
+  let userMem = null;
+  async function getUser(maxAgeSec = 20) {
+    if (userMem && Date.now() - userMem.t < maxAgeSec * 1000) return userMem;
+    const j = await api('user/?selections=stocks,money');
+    const owned = {};
+    const us = j.stocks && typeof j.stocks === 'object' ? j.stocks : {};
+    for (const [id, s] of Object.entries(us)) {
+      const n = Number(s.total_shares) || 0;
+      if (n > 0) owned[String(s.stock_id || id)] = n;
+    }
+    userMem = { t: Date.now(), owned, cash: Number(j.money_onhand) || 0 };
+    return userMem;
+  }
+
+  // =====================================================================
+  //  DATA COLLECTOR (runs while any Torn page is open)
+  // =====================================================================
+  const TAB = Math.random().toString(36).slice(2);
+  function isLeader() {
+    const l = store.get('leader', null);
+    if (!l || l.id === TAB || Date.now() - l.ts > 90000) { store.set('leader', { id: TAB, ts: Date.now() }); return true; }
+    return false;
+  }
+
+  const sync = { running: false, status: '' };
+
+  async function collectTick() {
+    if (!apiKey() || document.visibilityState === 'hidden' || !isLeader()) return;
+    try {
+      const m = await getMarket(55);
+      const t = Math.floor(m.t / 60000) * 60;
+      const p = {}; for (const s of Object.values(m.stocks)) p[s.id] = s.price;
+      await DB.put('minute', { t, p });
+      await foldMinutes();
+      const lastUser = await DB.meta('lastUserSnap', 0);
+      if (Date.now() - lastUser > 5 * 60000) {
+        const u = await getUser(60);
+        await snapshot(m, u);
+        await DB.setMeta('lastUserSnap', Date.now());
+        updateBadges();
+      }
+      const lastSync = await DB.meta('lastTornsy', 0);
+      if (!sync.running && Date.now() - lastSync > 60 * 60000) syncHistory().catch(() => {});
+      const lastPrune = await DB.meta('lastPrune', 0);
+      if (Date.now() - lastPrune > 86400000) {
+        await DB.delBelow('minute', Math.floor(Date.now() / 1000) - 90 * 86400);
+        await DB.setMeta('lastPrune', Date.now());
+      }
+    } catch (e) { /* retry next minute */ }
+  }
+
+  // Roll raw minute prices up into hourly closes (keeps raw minutes for 90 days).
+  async function foldMinutes() {
+    const nowH = hourStart(Math.floor(Date.now() / 1000));
+    const last = await DB.meta('foldedTo', 0);
+    if (last >= nowH) return;
+    const rows = await DB.all('minute', IDBKeyRange.bound(Math.max(last, nowH - 7 * 86400), nowH, false, true));
+    const closes = {};
+    for (const r of rows) {
+      const h = hourStart(r.t);
+      for (const [sid, price] of Object.entries(r.p)) (closes[sid] = closes[sid] || {})[h] = price;

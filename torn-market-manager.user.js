@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         Torn Market Manager (all-in-one)
 // @namespace    torn-market-manager
-// @version      2.2.1
+// @version      2.3.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tornsy.com
 // @connect      api.torn.com
+// @connect      raw.githubusercontent.com
+// @updateURL    https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
+// @downloadURL  https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
 // @run-at       document-end
 // ==/UserScript==
 
@@ -356,6 +359,14 @@
   const STOCK_URL = 'https://www.torn.com/page.php?sid=stocks';
   const LS = 'tmm_';
   const MODEL_VERSION = 'zbin-ensemble v1';
+
+  // ---- Updates --------------------------------------------------------
+  // To publish an update: change the @version line at the top AND this
+  // number to the same new value, then push the file to GitHub.
+  const SCRIPT_VERSION = '2.3.0';
+  const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js';
+  const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
+  const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
   const FEE = Core.FEE;
 
   const DEFAULTS = {
@@ -434,21 +445,51 @@
   }
 
   // Cross-origin GET for tornsy.com (public historical stock data).
-  async function httpGetJSON(url) {
+  async function httpGetText(url) {
     if (typeof PDA_httpGet === 'function') {
       const r = await PDA_httpGet(url, {});
-      const txt = typeof r === 'string' ? r : (r && (r.responseText != null ? r.responseText : r.body)) || '';
-      return JSON.parse(txt);
+      if (typeof r === 'string') return r;
+      if (r && r.responseText != null) return r.responseText;
+      if (r && typeof r.text === 'function') return String(await r.text());
+      return (r && r.body) || '';
     }
     if (typeof GM_xmlhttpRequest === 'function') {
       return new Promise((res, rej) => GM_xmlhttpRequest({
         method: 'GET', url, timeout: 20000,
-        onload: (r) => { try { res(JSON.parse(r.responseText)); } catch (e) { rej(e); } },
+        onload: (r) => res(r.responseText || ''),
         onerror: () => rej(new Error('Network error')), ontimeout: () => rej(new Error('Timeout')),
       }));
     }
     const r = await fetch(url);
-    return r.json();
+    return r.text();
+  }
+  async function httpGetJSON(url) { return JSON.parse(await httpGetText(url)); }
+
+  // ---- update check -----------------------------------------------------
+  const cmpVer = (a, b) => {
+    const x = String(a).split('.').map((n) => parseInt(n, 10) || 0), y = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
+    return 0;
+  };
+  const updateInfo = () => {
+    const u = store.get('update', null);
+    return u && cmpVer(u.latest, SCRIPT_VERSION) > 0 ? u : null;
+  };
+  // Reads only the @version line of the file on GitHub. Checks at most every 6 hours.
+  async function checkForUpdate(force = false) {
+    if (!updateConfigured()) return null;
+    const u = store.get('update', null);
+    if (!force && u && Date.now() - u.checked < 6 * 3600000) return updateInfo();
+    try {
+      const txt = await httpGetText(UPDATE_URL + '?t=' + Date.now());
+      const m = txt.match(/@version\s+([\d.]+)/);
+      if (m) store.set('update', { latest: m[1], checked: Date.now() });
+    } catch (e) { store.set('update', Object.assign({}, u || {}, { checked: Date.now(), err: String(e.message || e) })); }
+    return updateInfo();
+  }
+  function installUpdate() {
+    // Torn PDA and Tampermonkey both recognise a .user.js link and offer to install it.
+    location.href = UPDATE_URL + '?t=' + Date.now();
   }
 
   // =====================================================================
@@ -1520,10 +1561,14 @@
         <div><b>${money(total)}</b><span>Portfolio (stocks + cash)</span></div>
         <div><b>${money(cash)}</b><span>Cash on hand</span></div>
       </div>
+      ${updateInfo() ? `<div class="tmm-card opp"><b>Update available: v${esc(updateInfo().latest)}</b> <span class="tmm-sub">(you have v${SCRIPT_VERSION})</span>
+        <div class="tmm-row"><button class="tmm-act" id="tmm-upd">Update now</button><button class="tmm-plain" id="tmm-upd-notes">What's new</button></div></div>` : ''}
       ${pocket}${card}${perf.html}
       <div class="tmm-sub">Model: ${esc(MODEL_VERSION)} · ${an.validated ? `validated on ${hLabel(an.h)} horizon` : 'not validated'}${an.regime ? ' · market: ' + esc(an.regime.label) : ''}</div>`;
     const dep = $('#tmm-dep', body); if (dep) dep.onclick = () => runJob({ action: 'deposit' });
     const pc = $('#tmm-perf', body); if (pc) perf.wire(pc);
+    const ub = $('#tmm-upd', body); if (ub) ub.onclick = installUpdate;
+    const un = $('#tmm-upd-notes', body); if (un) un.onclick = () => window.open(REPO_PAGE, '_blank');
     if (rot && $('#tmm-sell', body)) {
       $('#tmm-sell', body).onclick = async () => {
         const id = await logDecision(an, rot, L, 'confirmed');
@@ -1605,7 +1650,24 @@
       ${f('s-days', 'Days of history to download', settings.historyDays)}
       ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
       <div class="tmm-row"><button class="tmm-plain" id="s-moon">Move the moon back to its default spot</button></div>
+      <h4>Updates</h4>
+      <div class="tmm-sub" id="s-ver">You have v${SCRIPT_VERSION}.${updateConfigured() ? '' : ' Update checks are off until the GitHub link is set in the script.'}</div>
+      <div class="tmm-row">${updateConfigured() ? '<button class="tmm-plain" id="s-chk">Check for updates</button>' : ''}</div>
       <div class="tmm-row"><button class="tmm-act" id="s-save">Save settings</button></div>`;
+    const chk = $('#s-chk', body);
+    if (chk) chk.onclick = async () => {
+      chk.textContent = 'Checking…';
+      const u = await checkForUpdate(true);
+      const v = $('#s-ver', body);
+      if (u) {
+        v.innerHTML = `Update available: <b>v${esc(u.latest)}</b> (you have v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Update now'; chk.className = 'tmm-act'; chk.onclick = installUpdate;
+      } else {
+        const s = store.get('update', null);
+        v.textContent = s && s.err ? `Couldn't reach GitHub: ${s.err}` : `You have the latest version (v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Check again';
+      }
+    };
     $('#s-moon', body).onclick = () => { store.set('dock', { edge: 'right', pos: 0.72 }); placeMoon(); };
     $('#s-save', body).onclick = () => {
       const g = (id) => $('#' + id, body).value.trim();
@@ -1656,7 +1718,7 @@
       }
       if (moon) moon.classList.toggle('has-opp', has);
       const note = $('[data-note="opp"]', root);
-      if (note) note.textContent = has ? '(trade idea)' : '';
+      if (note) note.textContent = has ? '(trade idea)' : updateInfo() ? '(update)' : '';
       updateCashBadge();
     } catch (e) { /* ignore */ }
   }
@@ -2088,6 +2150,7 @@
     setInterval(collectTick, 60000);
     setTimeout(updateBadges, 3000);
     setInterval(updateBadges, 60000);
+    setTimeout(() => { checkForUpdate().then(updateBadges).catch(() => {}); }, 8000);
   }
   boot();
 })();

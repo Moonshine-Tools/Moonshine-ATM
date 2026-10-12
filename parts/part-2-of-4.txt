@@ -1,0 +1,548 @@
+    }
+    const market = marketMem || store.get('market', null);
+    for (const [sid, byH] of Object.entries(closes)) {
+      const rec = (await DB.get('hourly', sid)) || { sid, acr: market && market.stocks[sid] ? market.stocks[sid].acr : '', t: [], c: [] };
+      mergeSeries(rec, Object.entries(byH).map(([h, c]) => [Number(h), c]));
+      await DB.put('hourly', rec);
+    }
+    await DB.setMeta('foldedTo', nowH);
+    if (A) A.dirty = true;
+  }
+
+  async function snapshot(m, u) {
+    let val = u.cash;
+    const holdings = {};
+    for (const [sid, n] of Object.entries(u.owned)) {
+      const s = m.stocks[sid]; if (!s) continue;
+      val += n * s.price; holdings[sid] = n;
+    }
+    await DB.put('snapshots', { t: hourStart(Math.floor(Date.now() / 1000)), cash: u.cash, holdings, value: val });
+  }
+
+  // Download hourly history from tornsy.com: newest first, then older pages.
+  async function syncHistory(force = false) {
+    if (sync.running) return;
+    sync.running = true;
+    try {
+      const m = await getMarket(600);
+      const prog = (await DB.meta('syncProg', {})) || {};
+      const minT = Math.floor(Date.now() / 1000) - settings.historyDays * 86400;
+      const ids = Object.keys(m.stocks);
+      let round = 0;
+      while (round++ < 40) {
+        let work = false;
+        for (let k = 0; k < ids.length; k++) {
+          if (document.visibilityState === 'hidden' && !force) return;
+          const sid = ids[k], s = m.stocks[sid];
+          const st = prog[sid] || (prog[sid] = {});
+          const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };
+          rec.acr = s.acr;
+          const base = `https://tornsy.com/api/${s.acr.toLowerCase()}?interval=h1&limit=2000`;
+          const nowSec = Math.floor(Date.now() / 1000);
+          let pts = [];
+          try {
+            if (!st.newest || nowSec - st.newest > 3600) {
+              const url = st.newest ? `${base}&from=${st.newest}` : base;
+              const j = await httpGetJSON(url);
+              pts = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
+              if (pts.length) {
+                st.newest = Math.max(st.newest || 0, pts[pts.length - 1][0]);
+                st.oldest = Math.min(st.oldest || Infinity, pts[0][0]);
+              }
+              await sleep(1100);
+            }
+            if (!st.done && st.oldest && st.oldest > minT) {
+              const j = await httpGetJSON(`${base}&to=${st.oldest}`);
+              const older = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
+              if (!older.length) st.done = true;
+              else { st.oldest = older[0][0]; pts = pts.concat(older); if (st.oldest <= minT) st.done = true; }
+              work = work || !st.done;
+              await sleep(1100);
+            } else if (st.oldest && st.oldest <= minT) st.done = true;
+          } catch (e) { st.err = String(e.message || e); await sleep(3000); }
+          if (pts.length) { mergeSeries(rec, pts); await DB.put('hourly', rec); }
+          await DB.setMeta('syncProg', prog);
+          const doneN = ids.filter((i) => prog[i] && prog[i].done).length;
+          sync.status = `${doneN} of ${ids.length} stocks fully downloaded`;
+        }
+        if (!work) break;
+      }
+      await DB.setMeta('lastTornsy', Date.now());
+      if (A) A.dirty = true;
+    } finally { sync.running = false; }
+  }
+
+  // =====================================================================
+  //  ANALYSIS
+  // =====================================================================
+  let A = null, analyzing = null;
+
+  async function analyze(force = false) {
+    if (A && !force && !A.dirty && Date.now() - A.t < 10 * 60000) return A;
+    if (analyzing) return analyzing;
+    analyzing = (async () => {
+      const recs = await DB.all('hourly');
+      let market = null;
+      try { market = await getMarket(90); } catch (e) { market = marketMem || store.get('market', null); }
+      const rowsBySid = {};
+      const liveH = market ? hourStart(Math.floor(market.t / 1000)) : 0;
+      for (const rec of recs) {
+        const rows = rec.t.map((t, i) => ({ t, c: rec.c[i] }));
+        const live = market && market.stocks[rec.sid];
+        if (live && rows.length) {
+          if (rows[rows.length - 1].t < liveH) rows.push({ t: liveH, c: live.price });
+          else if (rows[rows.length - 1].t === liveH) rows[rows.length - 1].c = live.price;
+        }
+        rowsBySid[rec.sid] = rows;
+      }
+      await yieldUI();
+      const S = Core.prepare(rowsBySid);
+      const nS = Object.keys(S).length;
+      await yieldUI();
+      let val = await DB.meta('validation', null);
+      if (nS >= 5 && (!val || force || val.ver !== Core.VAL_VER || Date.now() - val.at > 6 * 3600000 || val.nStocks !== nS)) {
+        val = Core.validate(S);
+        val.at = Date.now(); val.nStocks = nS;
+        await DB.setMeta('validation', val);
+      }
+      await yieldUI();
+      const model = nS >= 5 ? Core.fit(S, [6, 24, 168]) : null;
+      const h = val && val.h ? val.h : 24;
+      const preds = {};
+      for (const [sid, s] of Object.entries(S)) {
+        const i = s.n - 1, z = s.z[i];
+        let below = 0, tot = 0;
+        for (let j = Core.WARMUP; j < s.n; j += 6) if (Number.isFinite(s.z[j])) { tot++; if (s.z[j] <= z) below++; }
+        preds[sid] = { z, pctile: tot ? below / tot : NaN, pred: model ? Core.predict(model, sid, z, h) : null, lastT: s.t0 + i * 3600 };
+      }
+      const out = {
+        t: Date.now(), S, val, model, h, preds, market,
+        regime: nS >= 5 ? Core.regime(S) : null,
+        hyp: nS >= 5 ? hypotheses(S, val) : null,
+        validated: !!(val && val.ok),
+        nStocks: nS, hours: recs.reduce((a, r) => a + r.t.length, 0),
+        oldest: recs.reduce((a, r) => (r.t.length ? Math.min(a, r.t[0]) : a), Infinity),
+      };
+      await updateOutcomes(out);
+      A = out;
+      return A;
+    })();
+    try { return await analyzing; } finally { analyzing = null; }
+  }
+
+  // Tests the user's own hypotheses against the data.
+  function hypotheses(S, val) {
+    const daily = [];
+    for (const s of Object.values(S)) for (let i = 24; i < s.n; i += 24) daily.push(s.lp[i] - s.lp[i - 24]);
+    const n = daily.length;
+    const m = daily.reduce((a, b) => a + b, 0) / n;
+    const sd = Math.sqrt(daily.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1));
+    const tDrift = (m / sd) * Math.sqrt(n / 4); // /4: stocks are correlated
+    const out = [];
+    out.push(tDrift > 2
+      ? `Upward drift: confirmed. Stocks gained about ${pctPlain(Math.expm1(m * 365))} a year on average (t = ${tDrift.toFixed(1)}).`
+      : `Upward drift: not proven. Average yearly change ${pctPlain(Math.expm1(m * 365))}, which is within the noise (t = ${tDrift.toFixed(1)}).`);
+    if (val && val.horizons) {
+      for (const [h, r] of Object.entries(val.horizons)) {
+        const ic = r.ic;
+        if (!Number.isFinite(ic.t)) continue;
+        out.push(ic.t > 2
+          ? `${hLabel(+h)} horizon: stocks that were far from their normal price did move back, on data the model had not seen (t = ${ic.t.toFixed(1)}).`
+          : ic.t < -2
+            ? `${hLabel(+h)} horizon: the opposite happened. Moves tended to continue (momentum), not reverse (t = ${ic.t.toFixed(1)}).`
+            : `${hLabel(+h)} horizon: no reliable mean reversion or momentum found (t = ${ic.t.toFixed(1)}).`);
+        if (r.bt && r.bt.mom && r.bt.bh) out.push(`${hLabel(+h)}: momentum strategy ${pctPlain(r.bt.mom.ret)} vs buy-and-hold ${pctPlain(r.bt.bh.ret)} on the test period.`);
+      }
+    }
+    return out;
+  }
+
+  // Track what actually happened after each recommendation.
+  async function updateOutcomes(an) {
+    const decs = await DB.all('decisions');
+    const nowS = Math.floor(Date.now() / 1000);
+    for (const d of decs) {
+      if (d.outcome || !d.h || nowS < d.ts + d.h * 3600) continue;
+      const a = an.S[d.sell], b = an.S[d.buy];
+      if (!a || !b) continue;
+      const ia = Core.idxAt(a, hourStart(d.ts)), ib = Core.idxAt(b, hourStart(d.ts));
+      if (ia < 0 || ib < 0 || ia + d.h >= a.n || ib + d.h >= b.n) continue;
+      const realized = (b.lp[ib + d.h] - b.lp[ib]) - (a.lp[ia + d.h] - a.lp[ia]) - FEE;
+      d.outcome = { realized, at: nowS };
+      await DB.put('decisions', d);
+    }
+  }
+
+  // Build the live decision inputs from analysis + your holdings.
+  function liveStocks(an, user) {
+    const out = {};
+    const ex = excluded();
+    for (const s of Object.values(an.market ? an.market.stocks : {})) {
+      const owned = user.owned[s.id] || 0;
+      const p = an.preds[s.id];
+      out[s.id] = {
+        s, price: domPrice(s.id) || s.price, owned,
+        spare: owned - Core.protectedShares(s.benefit, owned),
+        pred: p && p.pred, z: p ? p.z : NaN, pctile: p ? p.pctile : NaN,
+        allowed: !ex.includes(s.acr),
+      };
+    }
+    return out;
+  }
+
+  function findOpportunity(an, user, cash) {
+    const L = liveStocks(an, user);
+    let total = cash;
+    for (const x of Object.values(L)) total += x.owned * x.price;
+    const rot = Core.bestRotation(L, {
+      totalValue: total, minEdge: settings.minEdgePct / 100, tMin: settings.evidenceT,
+      maxWeight: settings.maxWeightPct / 100, minTrade: settings.minTrade,
+    });
+    return { rot, L, total };
+  }
+
+  function evidence(rot, L) {
+    const n = Math.min(L[rot.sell].pred.neffStock || 0, L[rot.buy].pred.neffStock || 0);
+    if (rot.t > 3 && n >= 20) return 'Strong';
+    if (rot.t > 2) return 'Moderate';
+    return 'Light';
+  }
+
+  function whyLines(an, rot, L) {
+    const A_ = L[rot.sell], B_ = L[rot.buy];
+    const lines = [];
+    const desc = (x) => {
+      const dir = x.z >= 0 ? 'above' : 'below';
+      const pc = Number.isFinite(x.pctile) ? `, ${ordinal(Math.round(x.pctile * 100))} percentile of its history` : '';
+      return `${x.s.acr} is ${Math.abs(x.z).toFixed(1)} standard deviations ${dir} its 7-day normal price${pc}.`;
+    };
+    const hist = (x) => {
+      const p = x.pred;
+      const src = p.nStock > 50 ? `${num(p.nStock)} hourly samples of ${x.s.acr}` : `mostly market-wide data (${x.s.acr} has few similar moments)`;
+      return `When ${x.s.acr} was in this range before, its next ${hLabel(an.h)} change averaged ${pct(p.mean)}, rising ${Math.round(p.win * 100)}% of the time (${src}).`;
+    };
+    lines.push(desc(B_), hist(B_), desc(A_), hist(A_));
+    lines.push(`Difference after the 0.1% selling fee: ${pct(rot.adv)} over ${hLabel(an.h)}s, about ${rot.t.toFixed(1)}× its uncertainty.`);
+    lines.push('Only spare shares above your benefit blocks are sold.');
+    const v = an.val && an.val.horizons && an.val.horizons[an.h];
+    if (v && v.bt.model && v.bt.bh) lines.push(`Tested on the last ${an.val.testDays} days it hadn't seen: model ${pctPlain(v.bt.model.ret)} vs buy-and-hold ${pctPlain(v.bt.bh.ret)}.`);
+    return lines;
+  }
+  const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][((n % 100) - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
+
+  async function logDecision(an, rot, L, status) {
+    const ts = Math.floor(Date.now() / 1000);
+    const decs = await DB.all('decisions');
+    let d = decs.reverse().find((x) => x.sell === rot.sell && x.buy === rot.buy && ts - x.ts < 6 * 3600);
+    if (!d) {
+      d = {
+        ts, sell: rot.sell, buy: rot.buy, sellAcr: L[rot.sell].s.acr, buyAcr: L[rot.buy].s.acr,
+        amount: rot.amount, adv: rot.adv, se: rot.se, tstat: rot.t, h: an.h,
+        evidence: evidence(rot, L), regime: an.regime ? an.regime.label : '', model: MODEL_VERSION,
+        reasons: whyLines(an, rot, L), status,
+      };
+      d.id = await DB.add('decisions', d);
+    } else if (status !== 'shown') { d.status = status; await DB.put('decisions', d); }
+    return d.id;
+  }
+
+  // =====================================================================
+  //  PAGE READING & FILLING TORN'S TRADE BOX
+  //  Never presses Buy / Sell / Confirm. You do that.
+  // =====================================================================
+  function stockRows() { return $$("ul[class*='stock_']").filter((u) => /^\d+$/.test(u.id)); }
+  function findRow(id) { const el = document.getElementById(String(id)); return el && /stock/i.test(el.className) ? el : null; }
+  function domPrice(id) {
+    const row = findRow(id);
+    const el = row && row.querySelector("[class^='price_'], [class*=' price_'], [class*='price___']");
+    if (!el) return null;
+    const v = parseFloat(el.textContent.replace(/[^0-9.]/g, ''));
+    return v > 0 ? v : null;
+  }
+  function domCash() {
+    const el = document.getElementById('user-money');
+    const v = el && Number(el.getAttribute('data-money'));
+    return Number.isFinite(v) ? v : null;
+  }
+
+  function setNativeValue(input, v) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, v);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    const hidden = input.parentElement && input.parentElement.querySelector('input[type=hidden]');
+    if (hidden) hidden.value = v;
+  }
+  function kindOf(el) {
+    const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+    const cb = /buy/.test(cls), cs = /sell/.test(cls);
+    if (cb !== cs) return cb ? 'buy' : 'sell';
+    let b = false, s = false;
+    for (const x of el.querySelectorAll("button, [role='button'], input[type='submit'], a")) {
+      const t = (x.textContent || x.value || '').trim().toLowerCase();
+      if (/^buy\b/.test(t)) b = true;
+      if (/^sell\b/.test(t)) s = true;
+    }
+    if (b && s) return 'both';
+    return b ? 'buy' : s ? 'sell' : null;
+  }
+  function panelScope(row) {
+    const nodes = [row];
+    let n = row.nextElementSibling;
+    while (n && !(n.tagName === 'UL' && /^\d+$/.test(n.id))) { nodes.push(n); n = n.nextElementSibling; }
+    if (nodes.length === 1 && row.parentElement && row.parentElement.querySelectorAll("ul[class*='stock_']").length === 1) nodes.push(row.parentElement);
+    return nodes;
+  }
+  function findTradeInput(row, action) {
+    for (const root of panelScope(row)) {
+      const inputs = $$('input', root).filter((i) => i.type !== 'hidden' && i.offsetParent !== null && !i.closest('#tmm-root'));
+      for (const inp of inputs) {
+        let el = inp.parentElement;
+        while (el && el !== root.parentElement) {
+          const k = kindOf(el);
+          if (k === 'both') break;
+          if (k) { if (k === action) return inp; break; }
+          el = el.parentElement;
+        }
+      }
+    }
+    return null;
+  }
+  function safeOpenPanel(row) {
+    const cell = row.querySelector("[class*='stockOwned'], [class*='owned' i]");
+    if (!cell || /^(buy|sell|confirm|yes)\b/i.test(cell.textContent.trim())) return false;
+    cell.click(); // opens the panel only
+    return true;
+  }
+  const readNum = (input) => parseInt(String(input.value).replace(/[^0-9]/g, ''), 10);
+
+  // Torn's trade boxes are React components. Changing the text you see is not
+  // enough: React keeps its own copy of the number, and that copy is what the
+  // Sell button sends. So we (1) type the number like a keyboard would and
+  // (2) hand the number straight to React's own change handler.
+  function boxInputs(input) {
+    const g = input.closest('.input-money-group') || input.parentElement;
+    const list = g ? $$('input', g).filter((x) => !/^(button|submit|checkbox|radio)$/i.test(x.type)) : [];
+    return [input, ...list.filter((x) => x !== input)]; // the visible box first
+  }
+  const boxShows = (inputs, want) => inputs.every((x) => readNum(x) === want);
+  function reactProps(el) {
+    for (const k in el) if (k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$')) return el[k];
+    return null;
+  }
+  function nativeSet(el, v) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    try { setter.call(el, v); } catch (e) { el.value = v; }
+  }
+  function fakeEvent(el, type) {
+    return { type, target: el, currentTarget: el, nativeEvent: new Event(type), bubbles: true, isTrusted: false,
+      preventDefault() {}, stopPropagation() {}, persist() {}, isDefaultPrevented: () => false, isPropagationStopped: () => false };
+  }
+  function tellReact(el) {
+    const p = reactProps(el);
+    if (!p) return false;
+    for (const h of ['onChange', 'onInput']) { try { if (typeof p[h] === 'function') p[h](fakeEvent(el, h === 'onChange' ? 'change' : 'input')); } catch (e) { /* ignore */ } }
+    return true;
+  }
+  function keyEv(el, type, ch) {
+    el.dispatchEvent(new KeyboardEvent(type, { key: ch, code: /\d/.test(ch) ? 'Digit' + ch : ch, bubbles: true, cancelable: true }));
+  }
+  async function typeLikeKeyboard(el, str) {
+    try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    // clear
+    keyEv(el, 'keydown', 'Backspace');
+    nativeSet(el, '');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    keyEv(el, 'keyup', 'Backspace');
+    tellReact(el);
+    await sleep(30);
+    // type each digit
+    let cur = '';
+    for (const ch of str) {
+      cur += ch;
+      keyEv(el, 'keydown', ch);
+      keyEv(el, 'keypress', ch);
+      nativeSet(el, cur);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+      keyEv(el, 'keyup', ch);
+      tellReact(el);
+      await sleep(15);
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Replace whatever is in Torn's box with v, then check it actually stuck.
+  async function typeInto(input, v) {
+    const str = String(v), want = Number(v);
+    const inputs = boxInputs(input);
+    await typeLikeKeyboard(input, str);
+    for (const x of inputs.slice(1)) { nativeSet(x, str); x.dispatchEvent(new Event('input', { bubbles: true })); tellReact(x); }
+    try { input.blur(); } catch (e) { /* ignore */ }
+    await sleep(350);
+    if (!boxShows(inputs, want)) {
+      await typeLikeKeyboard(input, str);
+      try { input.blur(); } catch (e) { /* ignore */ }
+      await sleep(350);
+    }
+    return boxShows(inputs, want);
+  }
+
+  // Safety net: when Torn asks "Are you sure you want to sell N shares…",
+  // compare N with the number we filled in. If they differ, warn loudly.
+  function confirmShares(scopeNodes, action) {
+    const re = action === 'sell' ? /\bsell\s+([\d,]+)\s+(?:[A-Z]{2,4}\s+)?shares?\b/i : /\bbuy\s+([\d,]+)\s+(?:[A-Z]{2,4}\s+)?shares?\b/i;
+    for (const n of scopeNodes) {
+      const txt = (n.innerText || n.textContent || '').replace(/\s+/g, ' ');
+      const m = txt.match(re);
+      if (m) return parseInt(m[1].replace(/,/g, ''), 10);
+    }
+    return null;
+  }
+
+  async function openAndFill(stockId, action, shares) {
+    const row = await waitFor(() => findRow(stockId), 6000);
+    if (!row) return { res: 'missing' };
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    let input = findTradeInput(row, action);
+    if (!input && settings.autoOpen) safeOpenPanel(row);
+    input = input || (await waitFor(() => findTradeInput(row, action), settings.autoOpen ? 4000 : 20000));
+    if (!input) return { res: 'missing' };
+    const ok = await typeInto(input, shares);
+    input.classList.add('tmm-filled');
+    setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
+    return { res: ok ? 'ok' : 'unverified', input };
+  }
+
+  // =====================================================================
+  //  QUICK WITHDRAW / DEPOSIT PLANNING (uses the same model rankings)
+  // =====================================================================
+  const modelUsable = (an) => an && an.model && (an.validated || settings.showUnvalidated);
+
+  function planWithdraw(amount, an, user) {
+    const buf = 1 + settings.bufferPct / 100;
+    const L = liveStocks(an, user);
+    const useModel = modelUsable(an);
+    const opts = [];
+    for (const x of Object.values(L)) {
+      if (!x.owned || !x.allowed) continue;
+      const shares = Math.ceil((amount * buf) / (x.price * (1 - FEE)));
+      opts.push(Object.assign({}, x, { shares, fits: shares <= x.owned, breaks: shares > x.spare }));
+    }
+    const score = (o) => {
+      let v = 0;
+      if (useModel && o.pred) v -= o.pred.mean * 1000;            // sell the weakest expected stock
+      if (settings.parkStock && o.s.acr === settings.parkStock.toUpperCase()) v += useModel ? 1 : 5;
+      v += Math.min(useModel ? 1 : 5, (o.spare * o.price) / Math.max(amount, 1));
+      return v;
+    };
+    const mode = useModel ? 'model' : 'simple';
+    const clean = opts.filter((o) => o.fits && !o.breaks).sort((a, b) => score(b) - score(a));
+    if (clean.length) return { legs: [clean[0]], alts: clean.slice(1, 4), mode };
+    const totalSpare = opts.reduce((a, o) => a + Math.max(0, o.spare) * o.price * (1 - FEE), 0);
+    if (totalSpare >= amount) {
+      const legs = []; let left = amount;
+      for (const o of opts.filter((o) => o.spare > 0).sort((a, b) => score(b) - score(a))) {
+        if (left <= 0) break;
+        const sh = Math.min(o.spare, Math.ceil((left * buf) / (o.price * (1 - FEE))));
+        legs.push(Object.assign({}, o, { shares: sh, breaks: false, cap: o.spare }));
+        left -= sh * o.price * (1 - FEE);
+      }
+      return { legs, alts: [], mode: 'split' };
+    }
+    const breaking = opts.filter((o) => o.fits).sort((a, b) => score(b) - score(a));
+    if (breaking.length) return { legs: [breaking[0]], alts: breaking.slice(1, 4), mode: 'breaks' };
+    const all = opts.reduce((a, o) => a + o.owned * o.price * (1 - FEE), 0);
+    return { error: `You asked for ${money(amount)}, but all your shares are worth about ${money(all)} after fees.` };
+  }
+
+  function planDeposit(cash, an, user) {
+    const avail = cash - settings.keepOnHand;
+    if (avail <= 0) return { error: `Nothing to deposit. You have ${money(cash)} on hand and keep ${money(settings.keepOnHand)}.` };
+    const buf = 1 + settings.bufferPct / 100;
+    const L = liveStocks(an, user);
+    const useModel = modelUsable(an);
+    const park = settings.parkStock.toUpperCase();
+    let total = cash; for (const x of Object.values(L)) total += x.owned * x.price;
+    const opts = [];
+    for (const x of Object.values(L)) {
+      if (!x.allowed) continue;
+      if (settings.depositOwnedOnly && !x.owned && x.s.acr !== park) continue;
+      if (!useModel && !x.owned && x.s.acr !== park) continue;
+      const shares = Math.floor(avail / (x.price * buf));
+      if (shares < 1) continue;
+      const target = Core.nextBlockTarget(x.s.benefit, x.owned);
+      const completes = target != null && x.owned < target && x.owned + shares >= target;
+      const overweight = (x.owned * x.price + shares * x.price) / total > settings.maxWeightPct / 100;
+      opts.push(Object.assign({}, x, { shares, completes, overweight }));
+    }
+    const score = (o) => {
+      let v = 0;
+      if (useModel && o.pred) v += o.pred.mean * 1000;
+      if (o.overweight) v -= 50;
+      if (o.completes) v += useModel ? 2 : 6;
+      if (park && o.s.acr === park) v += useModel ? 1 : 5;
+      v += Math.min(3, Math.log10(1 + (o.owned * o.price) / 1e6) / 2);
+      return v;
+    };
+    opts.sort((a, b) => score(b) - score(a));
+    if (!opts.length) return { tooSmall: useModel || Object.values(L).some((x) => x.allowed && (x.owned || x.s.acr === park)), error: useModel ? `${money(avail)} isn't enough to buy one share of an allowed stock.` : 'No stock to deposit into yet. Set a parking stock in Market → Settings, or wait for the model to finish learning.' };
+    return { legs: [opts[0]], alts: opts.slice(1, 4), mode: useModel ? 'model' : 'simple', avail };
+  }
+
+  function quickReason(o, action, mode) {
+    if (mode === 'model' && o.pred) {
+      return `${o.s.acr} has the ${action === 'sell' ? 'weakest' : 'strongest'} expected ${hLabel(A ? A.h : 24)} return of your options (${pct(o.pred.mean)}), at ${Math.abs(o.z).toFixed(1)} std ${o.z >= 0 ? 'above' : 'below'} its normal price.`;
+    }
+    if (settings.parkStock && o.s.acr === settings.parkStock.toUpperCase()) return `${o.s.acr} is your parking stock.`;
+    return action === 'sell'
+      ? `${o.s.acr} has the most spare shares. (The model is still learning, so this uses a simple rule.)`
+      : `${o.s.acr} is your largest holding. (The model is still learning, so this uses a simple rule.)`;
+  }
+
+  // =====================================================================
+  //  UI
+  // =====================================================================
+  const CSS = `
+  #tmm-root{--bg:#1d2629;--bg2:#27353a;--line:#3a4c52;--ink:#e9eef0;--muted:#aebdc3;--head:#ffffff;--pos:#4cc47c;--neg:#ff7a7a;--warn:#f0b04a;--field:#121a1d;--brass:#d4ac2b;--onbrass:#1b1b1b;--shadow:rgba(0,0,0,.5);--you:#b88d10;--mkt:#4f86d9;
+    font:14px/1.45 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink)}
+  #tmm-root[data-theme=light]{--bg:#ffffff;--bg2:#f1f4f6;--line:#cfd8dc;--ink:#1d2629;--muted:#4f5f66;--head:#0f1416;--pos:#1b7f45;--neg:#b8322a;--warn:#9a5c00;--field:#ffffff;--brass:#c9a227;--onbrass:#1b1b1b;--shadow:rgba(0,0,0,.2);--you:#9a7300;--mkt:#3f6aa8}
+  #tmm-root *{box-sizing:border-box;color:inherit;font-family:inherit}
+  #tmm-root .tmm-moon{position:fixed;z-index:99998;width:46px;height:46px;border-radius:50%;border:0;padding:0;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;
+    background:radial-gradient(circle at 35% 30%,#33497a,#121a30 72%);box-shadow:0 3px 12px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.14);display:grid;place-items:center}
+  #tmm-root .tmm-moon svg{width:30px;height:30px;pointer-events:none}
+  #tmm-root .tmm-moon.dragging{opacity:.85;box-shadow:0 8px 20px rgba(0,0,0,.5)}
+  #tmm-root .tmm-dot{position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #121a30;display:none}
+  #tmm-root .tmm-dot.opp{top:-2px;right:-2px;background:#3fd17a}
+  #tmm-root .tmm-dot.cash{bottom:-2px;left:-2px;background:#ff9a2e}
+  #tmm-root .tmm-moon.has-opp .tmm-dot.opp,#tmm-root .tmm-moon.has-cash .tmm-dot.cash{display:block}
+  #tmm-root .tmm-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:6px}
+  #tmm-root .tmm-menu[hidden]{display:none}
+  #tmm-root .tmm-mi-note{font-weight:400;font-size:12px;opacity:.9;margin-left:6px}
+  #tmm-root .tmm-mi{border:0;border-radius:20px;padding:10px 15px;font-weight:600;font-size:14px;line-height:1;color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;text-align:left}
+  #tmm-root .tmm-mi.m{background:#2c3e66} #tmm-root .tmm-mi.w{background:#2a8450} #tmm-root .tmm-mi.d{background:#2f6d9c}
+  #tmm-root .tmm-mi:focus-visible,#tmm-root .tmm-moon:focus-visible,#tmm-root button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+  #tmm-root .tmm-sheet{position:fixed;z-index:99999;left:0;right:0;bottom:0;background:var(--bg);color:var(--ink);border-top:3px solid var(--brass);border-radius:14px 14px 0 0;
+    padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 16px);max-height:82vh;overflow:auto;box-shadow:0 -6px 24px var(--shadow)}
+  #tmm-root h3{margin:0 0 8px;font-size:17px;color:var(--head)}
+  #tmm-root h4{margin:14px 0 6px;font-size:14px;color:var(--brass)}
+  #tmm-root .tmm-big{font-size:21px;font-weight:700;color:var(--head);margin:2px 0}
+  #tmm-root .tmm-sub{color:var(--muted);margin:2px 0 6px}
+  #tmm-root .tmm-card{background:var(--bg2);border-radius:10px;padding:12px;margin:10px 0}
+  #tmm-root .tmm-card.opp{border-left:4px solid var(--brass)}
+  #tmm-root .tmm-why{margin:6px 0 0;padding-left:18px} #tmm-root .tmm-why li{margin:3px 0;color:var(--ink)}
+  #tmm-root .tmm-warn{color:var(--warn);font-weight:600;margin:6px 0} #tmm-root .tmm-err{color:var(--neg);font-weight:600;margin:6px 0} #tmm-root .tmm-ok{color:var(--pos);font-weight:600;margin:6px 0}
+  #tmm-root .tmm-status{margin:10px 0;padding:10px;border-left:3px solid var(--brass);background:var(--bg2);color:var(--ink)}
+  #tmm-root .tmm-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
+  #tmm-root .tmm-chip{background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:7px 12px;font-size:14px;cursor:pointer}
+  #tmm-root .tmm-input{width:100%;font-size:20px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink)}
+  #tmm-root .tmm-act{background:var(--brass);color:var(--onbrass);border:0;border-radius:8px;padding:11px 16px;font-weight:700;font-size:15px;line-height:1;cursor:pointer}
+  #tmm-root .tmm-plain{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer}
+  #tmm-root .tmm-tabs{display:flex;gap:4px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
+  #tmm-root .tmm-tab{background:none;border:0;color:var(--muted);padding:8px 12px;font-weight:600;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+  #tmm-root .tmm-tab[aria-selected=true]{color:var(--head);border-bottom-color:var(--brass)}
+  #tmm-root .tmm-kpis{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+  #tmm-root .tmm-kpis b{display:block;font-size:17px;color:var(--head)} #tmm-root .tmm-kpis span{color:var(--muted);font-size:12px}
+  #tmm-root .tmm-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:transparent}
+  #tmm-root .tmm-tbl th,#tmm-root .tmm-tbl td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--ink);background:transparent}
+  #tmm-root .tmm-tbl th:first-child,#tmm-root .tmm-tbl td:first-child{text-align:left} #tmm-root .tmm-tbl th{color:var(--muted);font-weight:600}

@@ -1,0 +1,443 @@
+  #tmm-root .tmm-scroll{overflow-x:auto}
+  #tmm-root .tmm-field{margin:9px 0} #tmm-root .tmm-field label{display:block;color:var(--muted);margin-bottom:3px}
+  #tmm-root .tmm-field input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--field);color:var(--ink);font-size:15px}
+  #tmm-root .tmm-check{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--ink)}
+  #tmm-root .tmm-pos,#tmm-root .tmm-tbl td.tmm-pos,#tmm-root .tmm-kpis b.tmm-pos{color:var(--pos)} #tmm-root .tmm-neg,#tmm-root .tmm-tbl td.tmm-neg,#tmm-root .tmm-kpis b.tmm-neg{color:var(--neg)}
+  #tmm-root .tmm-chart-wrap{position:relative}
+  #tmm-root .tmm-chart{display:block;width:100%;height:auto;touch-action:pan-y}
+  #tmm-root .tmm-c-grid{stroke:var(--line);stroke-width:1}
+  #tmm-root .tmm-c-zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+  #tmm-root .tmm-c-ax{fill:var(--muted);font-size:10px}
+  #tmm-root .tmm-c-lab{fill:var(--ink);font-size:10px;font-weight:600}
+  #tmm-root .tmm-c-you{fill:none;stroke:var(--you);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  #tmm-root .tmm-c-mkt{fill:none;stroke:var(--mkt);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:5 3}
+  #tmm-root .tmm-c-x{stroke:var(--muted);stroke-width:1}
+  #tmm-root .tmm-c-tip{position:absolute;top:0;width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;line-height:1.35;pointer-events:none;box-shadow:0 2px 8px var(--shadow)}
+  #tmm-root .tmm-c-legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:4px}
+  #tmm-root .tmm-c-sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--you);vertical-align:middle;margin-right:5px}
+  #tmm-root .tmm-c-sw.mkt{border-top:2px dashed var(--mkt)}
+  #tmm-root .tmm-chip[aria-pressed=true]{border-color:var(--brass);color:var(--head);font-weight:600}
+  #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
+  #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
+    background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
+  #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
+  #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
+  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
+  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
+  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
+  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
+
+  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
+    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
+    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
+    <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
+
+  let root, sheet, pill = null, moon, menu, watchTimer = null;
+  const MOON = 46, EDGE_GAP = 6;
+
+  const isDark = () => document.body.classList.contains('dark-mode') || document.documentElement.classList.contains('dark-mode');
+  function applyTheme() { if (root) root.dataset.theme = isDark() ? 'dark' : 'light'; }
+
+  function mountUI() {
+    if (document.getElementById('tmm-root')) return;
+    const style = document.createElement('style');
+    style.textContent = CSS;
+    document.head.appendChild(style);
+    root = document.createElement('div');
+    root.id = 'tmm-root';
+    root.innerHTML = `
+      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
+      <div class="tmm-menu" hidden>
+        <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
+        <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
+        <button class="tmm-mi d" data-a="deposit">Deposit<span class="tmm-mi-note" data-note="cash"></span></button>
+      </div>`;
+    document.body.appendChild(root);
+    moon = $('.tmm-moon', root);
+    menu = $('.tmm-menu', root);
+    applyTheme();
+    new MutationObserver(applyTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    placeMoon();
+    window.addEventListener('resize', () => { placeMoon(); if (!menu.hidden) positionMenu(); });
+
+    menu.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (!b) return;
+      hideMenu();
+      ({ market: () => showMarket('overview'), withdraw: askWithdraw, deposit: () => runJob({ action: 'deposit' }) })[b.dataset.a]();
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!menu.hidden && !menu.contains(e.target) && !moon.contains(e.target)) hideMenu();
+    }, true);
+
+    // Drag the moon anywhere; it snaps to the nearest screen edge.
+    let drag = null;
+    moon.addEventListener('pointerdown', (e) => {
+      drag = { x0: e.clientX, y0: e.clientY, moved: false };
+      try { moon.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+    moon.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
+      if (!drag.moved) { drag.moved = true; moon.classList.add('dragging'); hideMenu(); }
+      moon.style.left = (e.clientX - MOON / 2) + 'px';
+      moon.style.top = (e.clientY - MOON / 2) + 'px';
+      e.preventDefault();
+    });
+    moon.addEventListener('pointerup', (e) => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      moon.classList.remove('dragging');
+      if (moved) snapMoon(e.clientX, e.clientY);
+      else if (menu.hidden) showMenu(); else hideMenu();
+    });
+    moon.addEventListener('pointercancel', () => { if (drag && drag.moved) placeMoon(); drag = null; moon.classList.remove('dragging'); });
+    moon.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (menu.hidden) showMenu(); else hideMenu(); } });
+  }
+
+  const dockPos = () => store.get('dock', { edge: 'right', pos: 0.72 });
+  function placeMoon() {
+    const d = dockPos(), W = window.innerWidth, H = window.innerHeight;
+    const along = (len) => EDGE_GAP + Math.min(1, Math.max(0, d.pos)) * (len - MOON - 2 * EDGE_GAP);
+    let x, y;
+    if (d.edge === 'left') { x = EDGE_GAP; y = along(H); }
+    else if (d.edge === 'top') { x = along(W); y = EDGE_GAP; }
+    else if (d.edge === 'bottom') { x = along(W); y = H - MOON - EDGE_GAP; }
+    else { x = W - MOON - EDGE_GAP; y = along(H); }
+    moon.style.left = x + 'px';
+    moon.style.top = y + 'px';
+  }
+  function snapMoon(cx, cy) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const dist = { left: cx, right: W - cx, top: cy, bottom: H - cy };
+    const edge = Object.keys(dist).sort((a, b) => dist[a] - dist[b])[0];
+    const pos = edge === 'left' || edge === 'right'
+      ? (cy - MOON / 2 - EDGE_GAP) / (H - MOON - 2 * EDGE_GAP)
+      : (cx - MOON / 2 - EDGE_GAP) / (W - MOON - 2 * EDGE_GAP);
+    store.set('dock', { edge, pos: Math.min(1, Math.max(0, pos)) });
+    placeMoon();
+  }
+  function positionMenu() {
+    const d = dockPos(), r = moon.getBoundingClientRect(), m = menu.getBoundingClientRect();
+    const W = window.innerWidth, H = window.innerHeight;
+    let x, y;
+    if (d.edge === 'left') { x = r.right + 8; y = r.top + r.height / 2 - m.height / 2; }
+    else if (d.edge === 'top') { x = r.left + r.width / 2 - m.width / 2; y = r.bottom + 8; }
+    else if (d.edge === 'bottom') { x = r.left + r.width / 2 - m.width / 2; y = r.top - 8 - m.height; }
+    else { x = r.left - 8 - m.width; y = r.top + r.height / 2 - m.height / 2; }
+    menu.style.left = Math.min(W - m.width - 6, Math.max(6, x)) + 'px';
+    menu.style.top = Math.min(H - m.height - 6, Math.max(6, y)) + 'px';
+    menu.style.alignItems = d.edge === 'right' ? 'flex-end' : 'flex-start';
+  }
+  function showMenu() { menu.hidden = false; positionMenu(); moon.setAttribute('aria-expanded', 'true'); }
+  function hideMenu() { if (menu) menu.hidden = true; if (moon) moon.setAttribute('aria-expanded', 'false'); }
+
+  function openSheet(html) {
+    closeSheet();
+    hideMenu();
+    sheet = document.createElement('div');
+    sheet.className = 'tmm-sheet';
+    sheet.setAttribute('role', 'dialog');
+    sheet.innerHTML = html;
+    root.appendChild(sheet);
+    return sheet;
+  }
+  function closeSheet() {
+    if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+    if (sheet) sheet.remove();
+    if (pill) pill.remove();
+    sheet = null; pill = null;
+  }
+
+  // Collapsed state: the sheet hides and a small status pill stays at the top.
+  function showPill(text, cls = '', extra = null) {
+    if (pill) pill.remove();
+    pill = document.createElement('div');
+    pill.className = 'tmm-pill ' + cls;
+    pill.setAttribute('role', 'status');
+    pill.innerHTML = `<span class="tmm-pill-t">${esc(text)}</span>${extra ? `<button data-p="extra" class="tmm-pill-go">${esc(extra.label)}</button>` : ''}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
+    pill.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-p]');
+      if (b && b.dataset.p === 'x') return closeSheet();
+      if (b && b.dataset.p === 'extra' && extra) return extra.fn();
+      if (b && b.dataset.p === 'open') expandSheet();
+    });
+    root.appendChild(pill);
+  }
+  function minimizeSheet(text) { if (!sheet) return; sheet.style.display = 'none'; showPill(text); }
+  function expandSheet() { if (sheet) sheet.style.display = ''; if (pill) { pill.remove(); pill = null; } }
+  function updatePill(text) { const t = pill && pill.querySelector('.tmm-pill-t'); if (t) t.textContent = text; }
+
+  function spark(an, sid) {
+    const s = an.S[sid];
+    if (!s) return '';
+    const from = Math.max(0, s.n - 720);
+    const pts = []; let lo = Infinity, hi = -Infinity;
+    for (let i = from; i < s.n; i += 4) { lo = Math.min(lo, s.lp[i]); hi = Math.max(hi, s.lp[i]); pts.push(s.lp[i]); }
+    if (pts.length < 2 || hi === lo) return '';
+    const W = 300, Hh = 34;
+    const d = pts.map((v, i) => `${(i / (pts.length - 1) * W).toFixed(1)},${(Hh - 2 - (v - lo) / (hi - lo) * (Hh - 4)).toFixed(1)}`).join(' ');
+    return `<svg class="tmm-spark" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" aria-label="${esc(an.market.stocks[sid].acr)} last 30 days"><polyline fill="none" stroke="#c9a227" stroke-width="1.5" points="${d}"/></svg>`;
+  }
+
+  // ------------------------------------------------------------ performance
+  // Measures how your stocks grew, ignoring money you add or take out.
+  // Each hour's change is priced from the shares you held at the start of
+  // that hour, then chained together (a "time-weighted" return). The market
+  // line does the same for an equal mix of every stock.
+  function perfSeries(an, snaps) {
+    const S = an.S;
+    const px = (sid, t) => { const s = S[sid]; if (!s) return NaN; const i = Core.idxAt(s, t); return i < 0 ? NaN : Math.exp(s.lp[i]); };
+    const pts = [];
+    if (!snaps.length) return pts;
+    let you = 1, mkt = 1;
+    pts.push({ t: snaps[0].t, you: 0, mkt: 0 });
+    for (let k = 1; k < snaps.length; k++) {
+      const a = snaps[k - 1], b = snaps[k];
+      let v0 = 0, v1 = 0;
+      for (const [sid, n] of Object.entries(a.holdings || {})) {
+        const p0 = px(sid, a.t), p1 = px(sid, b.t);
+        if (p0 > 0 && p1 > 0) { v0 += n * p0; v1 += n * p1; }
+      }
+      if (v0 > 0) you *= v1 / v0;
+      let sum = 0, cnt = 0;
+      for (const sid of Object.keys(S)) {
+        const p0 = px(sid, a.t), p1 = px(sid, b.t);
+        if (p0 > 0 && p1 > 0) { sum += p1 / p0; cnt++; }
+      }
+      if (cnt) mkt *= sum / cnt;
+      pts.push({ t: b.t, you: you - 1, mkt: mkt - 1 });
+    }
+    return pts;
+  }
+
+  function rebase(pts, fromT) {
+    const sub = pts.filter((p) => p.t >= fromT);
+    if (sub.length < 2) return sub;
+    const y0 = 1 + sub[0].you, m0 = 1 + sub[0].mkt;
+    return sub.map((p) => ({ t: p.t, you: (1 + p.you) / y0 - 1, mkt: (1 + p.mkt) / m0 - 1 }));
+  }
+
+  function perfChart(pts) {
+    if (pts.length < 2) return '<div class="tmm-sub">Not enough history in this range yet. Snapshots are saved hourly while Torn is open.</div>';
+    const W = 320, H = 150, L = 40, R = 46, T = 8, B = 20;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    let lo = 0, hi = 0;
+    for (const p of pts) { lo = Math.min(lo, p.you, p.mkt); hi = Math.max(hi, p.you, p.mkt); }
+    if (hi - lo < 0.002) { hi += 0.001; lo -= 0.001; }
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    const x = (t) => L + (t - t0) / Math.max(1, t1 - t0) * (W - L - R);
+    const y = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
+    const line = (k) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p[k]).toFixed(1)}`).join('');
+    const ticks = [lo + pad, 0, hi - pad].filter((v, i, a) => a.findIndex((w) => Math.abs(w - v) < (hi - lo) * 0.12) === i);
+    const fmtD = (t) => new Date(t * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const last = pts[pts.length - 1];
+    let ly = y(last.you), lm = y(last.mkt);
+    if (Math.abs(ly - lm) < 12) { if (ly <= lm) { ly -= 6; lm += 6; } else { ly += 6; lm -= 6; } }
+    return `<div class="tmm-chart-wrap"><svg class="tmm-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Your stocks ${pctPlain(last.you, 2)} vs market ${pctPlain(last.mkt, 2)} over this range">
+      ${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="${Math.abs(v) < 1e-12 ? 'tmm-c-zero' : 'tmm-c-grid'}"/><text x="${L - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" class="tmm-c-ax">${pctPlain(v, Math.abs(hi - lo) < 0.02 ? 2 : 1)}</text>`).join('')}
+      <text x="${L}" y="${H - 5}" class="tmm-c-ax">${fmtD(t0)}</text><text x="${W - R}" y="${H - 5}" text-anchor="end" class="tmm-c-ax">${fmtD(t1)}</text>
+      <path d="${line('mkt')}" class="tmm-c-mkt"/><path d="${line('you')}" class="tmm-c-you"/>
+      <text x="${W - R + 4}" y="${(ly + 3).toFixed(1)}" class="tmm-c-lab">You</text>
+      <text x="${W - R + 4}" y="${(lm + 3).toFixed(1)}" class="tmm-c-lab tmm-c-lab2">Market</text>
+      <line class="tmm-c-x" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
+      <rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent" class="tmm-c-hit"/>
+    </svg><div class="tmm-c-tip" hidden></div></div>
+    <div class="tmm-c-legend"><span><i class="tmm-c-sw you"></i>Your stocks</span><span><i class="tmm-c-sw mkt"></i>Market (all stocks, equal mix)</span></div>`;
+  }
+
+  function wireChart(box, pts) {
+    const svg = $('.tmm-chart', box), tip = $('.tmm-c-tip', box), hit = $('.tmm-c-hit', svg), xl = $('.tmm-c-x', svg);
+    if (!svg || pts.length < 2) return;
+    const vb = svg.viewBox.baseVal, L = 40, R = 46, t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const show = (e) => {
+      const r = svg.getBoundingClientRect();
+      const sx = (e.clientX - r.left) / r.width * vb.width;
+      const tt = t0 + (sx - L) / (vb.width - L - R) * (t1 - t0);
+      let best = pts[0];
+      for (const p of pts) if (Math.abs(p.t - tt) < Math.abs(best.t - tt)) best = p;
+      const px = L + (best.t - t0) / Math.max(1, t1 - t0) * (vb.width - L - R);
+      xl.setAttribute('x1', px); xl.setAttribute('x2', px); xl.setAttribute('visibility', 'visible');
+      const d = new Date(best.t * 1000);
+      tip.innerHTML = `<b>${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: 'numeric' })}</b><br>You ${pctPlain(best.you, 2)}<br>Market ${pctPlain(best.mkt, 2)}`;
+      tip.hidden = false;
+      const left = px / vb.width * r.width;
+      tip.style.left = Math.min(r.width - 120, Math.max(0, left - 60)) + 'px';
+    };
+    const hide = () => { tip.hidden = true; xl.setAttribute('visibility', 'hidden'); };
+    hit.addEventListener('pointermove', show);
+    hit.addEventListener('pointerdown', show);
+    hit.addEventListener('pointerleave', hide);
+  }
+
+  async function perfCard(an) {
+    const snaps = (await DB.all('snapshots')).sort((a, b) => a.t - b.t);
+    const pts = perfSeries(an, snaps);
+    const execs = await DB.all('executions');
+    const rotSells = execs.filter((e) => e.kind === 'rotation' && e.action === 'sell').length;
+    const nowS = Math.floor(Date.now() / 1000);
+    const ranges = { '1D': nowS - 86400, '7D': nowS - 7 * 86400, '30D': nowS - 30 * 86400, All: 0 };
+    let sel = store.get('perfRange', '7D');
+    if (!(sel in ranges)) sel = '7D';
+    const open = store.get('perfOpen', false);
+    const sum = (from) => { const r = rebase(pts, from); const l = r[r.length - 1]; return r.length >= 2 ? l : null; };
+    const all = sum(0), day = sum(ranges['1D']);
+    const kp = (v) => v == null ? '<b>—</b>' : `<b class="${v >= 0 ? 'tmm-pos' : 'tmm-neg'}">${pctPlain(v, 2)}</b>`;
+    const edge = all ? (1 + all.you) / (1 + all.mkt) - 1 : null;
+    const since = pts.length ? new Date(pts[0].t * 1000).toLocaleDateString() : '';
+    const html = `<div class="tmm-card" id="tmm-perf">
+      <div class="tmm-kpis">
+        <div>${kp(day && day.you)}<span>Your stocks, last 24h</span></div>
+        <div>${kp(all && all.you)}<span>Your stocks${since ? ', since ' + since : ''}</span></div>
+        <div>${kp(all && all.mkt)}<span>Market, same period</span></div>
+        <div>${kp(edge)}<span>You vs market</span></div>
+      </div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-perf-tog" aria-expanded="${open}">${open ? 'Hide chart' : 'Show growth chart'}</button>${rotSells ? `<span class="tmm-sub">${rotSells} rotation trade${rotSells > 1 ? 's' : ''} made</span>` : ''}</div>
+      <div id="tmm-perf-body" ${open ? '' : 'hidden'}>
+        <div class="tmm-row" role="group" aria-label="Range">${Object.keys(ranges).map((k) => `<button class="tmm-chip" data-rng="${k}" aria-pressed="${k === sel}">${k}</button>`).join('')}</div>
+        <div id="tmm-perf-chart"></div>
+        <div class="tmm-sub">Growth of the shares you held, ignoring cash you add or take out. Above the market line means your picks and trades are beating just holding everything.</div>
+      </div></div>`;
+    const wire = (box) => {
+      const draw = () => { const c = $('#tmm-perf-chart', box); const r = rebase(pts, ranges[sel]); c.innerHTML = perfChart(r); wireChart(c, r); };
+      $('#tmm-perf-tog', box).onclick = (e) => {
+        const b = $('#tmm-perf-body', box); b.hidden = !b.hidden;
+        store.set('perfOpen', !b.hidden);
+        e.currentTarget.textContent = b.hidden ? 'Show growth chart' : 'Hide chart';
+        e.currentTarget.setAttribute('aria-expanded', String(!b.hidden));
+        if (!b.hidden) draw();
+      };
+      $$('[data-rng]', box).forEach((btn) => (btn.onclick = () => {
+        sel = btn.dataset.rng; store.set('perfRange', sel);
+        $$('[data-rng]', box).forEach((x) => x.setAttribute('aria-pressed', String(x === btn)));
+        draw();
+      }));
+      if (open) draw();
+    };
+    return { html, wire };
+  }
+
+  // ------------------------------------------------------------ Market panel
+  async function showMarket(tab = 'overview') {
+    const s = openSheet(`
+      <div class="tmm-tabs" role="tablist">
+        <button class="tmm-tab" role="tab" data-tab="overview" aria-selected="${tab === 'overview'}">Overview</button>
+        <button class="tmm-tab" role="tab" data-tab="details" aria-selected="${tab === 'details'}">Details</button>
+        <button class="tmm-tab" role="tab" data-tab="settings" aria-selected="${tab === 'settings'}">Settings</button>
+        <button class="tmm-plain" id="tmm-x" style="margin-left:auto;padding:6px 10px">Close</button>
+      </div>
+      <div id="tmm-body"><div class="tmm-sub">Loading…</div></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    $$('[data-tab]', s).forEach((b) => (b.onclick = () => showMarket(b.dataset.tab)));
+    const body = $('#tmm-body', s);
+    try {
+      if (tab === 'settings') return renderSettings(body);
+      if (!apiKey()) { body.innerHTML = `<div class="tmm-err">Add your Torn API key in Settings first.</div>`; return; }
+      const [an, user] = await Promise.all([analyze(), getUser(20)]);
+      if (!sheet || !document.body.contains(body)) return;
+      if (tab === 'details') return renderDetails(body, an, user);
+      return renderOverview(body, an, user);
+    } catch (e) {
+      body.innerHTML = `<div class="tmm-err">${esc(e.message || e)}</div>`;
+    }
+  }
+
+  async function renderOverview(body, an, user) {
+    const cash = domCash() ?? user.cash;
+    let { rot, L, total } = an.market ? findOpportunity(an, user, cash) : { rot: null, L: {}, total: cash };
+    const skip = store.get('skip', null);
+    if (rot && skip && skip.k === rot.sell + '>' + rot.buy && Date.now() < skip.until) rot = null;
+    const perf = await perfCard(an);
+    const stale = !an.market || Date.now() - an.market.t > 5 * 60000;
+    let card;
+    if (stale) {
+      card = `<div class="tmm-card"><div class="tmm-big">Data stale — no recommendation</div><div class="tmm-sub">Couldn't get fresh prices from Torn. Check your connection and reopen.</div></div>`;
+    } else if (!an.model || (an.val && an.val.ok === false && an.val.reason && an.val.reason.startsWith('Need'))) {
+      card = `<div class="tmm-card"><div class="tmm-big">Learning the market</div>
+        <div class="tmm-sub">${esc(an.val && an.val.reason ? an.val.reason : 'Downloading price history.')}</div>
+        <div class="tmm-sub">${esc(sync.status || 'History download starts automatically while Torn is open.')}</div>
+        <div class="tmm-sub">Withdraw and Deposit work now with simple rules.</div></div>`;
+    } else if (!an.validated && !settings.showUnvalidated) {
+      card = `<div class="tmm-card"><div class="tmm-big">No action</div>
+        <div class="tmm-sub">The model did not beat buy-and-hold reliably on the ${an.val ? an.val.testDays : '?'} days of data it hadn't seen, so it isn't recommending trades. See Details for the test results.</div></div>`;
+    } else if (!rot) {
+      const near = Core.bestRotation(L, { totalValue: total, minEdge: -1, tMin: -99, maxWeight: settings.maxWeightPct / 100, minTrade: 0 });
+      const nearTxt = near
+        ? `Closest idea: sell ${esc(L[near.sell].s.acr)} → buy ${esc(L[near.buy].s.acr)}, ${pct(near.adv)} after the fee (needs ${settings.minEdgePct}%), evidence ${near.t.toFixed(1)}× (needs ${settings.evidenceT}×).`
+        : 'No spare shares above your benefit blocks to rotate.';
+      card = `<div class="tmm-card"><div class="tmm-big">No action</div>
+        <div class="tmm-sub">Nothing clears the bar right now. ${nearTxt}</div>
+        <div class="tmm-sub">Checked ${new Date(an.t).toLocaleTimeString()}.</div></div>`;
+    } else {
+      const ev = evidence(rot, L);
+      await logDecision(an, rot, L, 'shown');
+      card = `<div class="tmm-card opp">
+        <div class="tmm-sub">Opportunity${an.validated ? '' : ' (model not validated)'}</div>
+        <div class="tmm-big">Sell ${money(rot.amount)} of ${esc(L[rot.sell].s.acr)}</div>${spark(an, rot.sell)}
+        <div class="tmm-big">Buy ${esc(L[rot.buy].s.acr)}</div>${spark(an, rot.buy)}
+        <div class="tmm-kpis" style="margin-top:8px"><div><b class="tmm-pos">${pct(rot.adv)}</b><span>Estimated net advantage over ${hLabel(an.h)}</span></div><div><b>${ev}</b><span>Evidence</span></div></div>
+        <ul class="tmm-why">${whyLines(an, rot, L).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
+        <div class="tmm-row"><button class="tmm-act" id="tmm-sell">Confirm sell</button><button class="tmm-plain" id="tmm-skip">Skip</button></div></div>`;
+    }
+    const pocket = cash > settings.keepOnHand + 1000
+      ? `<div class="tmm-card"><div class="tmm-warn">You're carrying ${money(cash)} in cash.</div><div class="tmm-row"><button class="tmm-act" id="tmm-dep">Deposit it into stocks</button></div></div>` : '';
+    body.innerHTML = `
+      <div class="tmm-kpis">
+        <div><b>${money(total)}</b><span>Portfolio (stocks + cash)</span></div>
+        <div><b>${money(cash)}</b><span>Cash on hand</span></div>
+      </div>
+      ${updateInfo() ? `<div class="tmm-card opp"><b>Update available: v${esc(updateInfo().latest)}</b> <span class="tmm-sub">(you have v${SCRIPT_VERSION})</span>
+        <div class="tmm-row"><button class="tmm-act" id="tmm-upd">Update now</button><button class="tmm-plain" id="tmm-upd-notes">What's new</button></div></div>` : ''}
+      ${pocket}${card}${perf.html}
+      <div class="tmm-sub">Model: ${esc(MODEL_VERSION)} · ${an.validated ? `validated on ${hLabel(an.h)} horizon` : 'not validated'}${an.regime ? ' · market: ' + esc(an.regime.label) : ''}</div>`;
+    const dep = $('#tmm-dep', body); if (dep) dep.onclick = () => runJob({ action: 'deposit' });
+    const pc = $('#tmm-perf', body); if (pc) perf.wire(pc);
+    const ub = $('#tmm-upd', body); if (ub) ub.onclick = installUpdate;
+    const un = $('#tmm-upd-notes', body); if (un) un.onclick = () => window.open(REPO_PAGE, '_blank');
+    if (rot && $('#tmm-sell', body)) {
+      $('#tmm-sell', body).onclick = async () => {
+        const id = await logDecision(an, rot, L, 'confirmed');
+        runJob({ action: 'rotate', stage: 'sell', sell: rot.sell, buy: rot.buy, shares: rot.sellShares, decisionId: id });
+      };
+      $('#tmm-skip', body).onclick = async () => {
+        await logDecision(an, rot, L, 'skipped');
+        store.set('skip', { k: rot.sell + '>' + rot.buy, until: Date.now() + 3 * 3600000 });
+        closeSheet();
+      };
+    }
+  }
+
+  async function renderDetails(body, an, user) {
+    const v = an.val;
+    let html = '';
+    html += `<h4>Did the model work on data it hadn't seen?</h4>`;
+    if (!v || !v.horizons) html += `<div class="tmm-sub">${esc((v && v.reason) || 'Not enough history yet.')}</div>`;
+    else {
+      html += `<div class="tmm-sub">Trained on the first 70% of history, tested on the last ${v.testDays} days. ${v.ok ? 'Passed.' : 'Did not pass.'}</div>`;
+      for (const [h, r] of Object.entries(v.horizons)) {
+        const row = (name, x) => x ? `<tr><td>${name}</td><td class="${x.ret >= 0 ? 'tmm-pos' : 'tmm-neg'}">${pctPlain(x.ret)}</td><td>${pctPlain(-x.maxDD)}</td><td>${x.trades}</td></tr>` : '';
+        html += `<div class="tmm-card"><b>${hLabel(+h)} horizon</b> ${r.passed ? '<span class="tmm-ok">passed</span>' : '<span class="tmm-warn">not passed</span>'}
+          <div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Strategy</th><th>Return</th><th>Worst drop</th><th>Trades</th></tr>
+          ${row('Buy and hold', r.bt.bh)}${row('Momentum', r.bt.mom)}${row('Simple mean reversion', r.bt.mr)}${row('This model', r.bt.model)}</table></div>
+          <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 2). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 2/3).</div></div>`;
+      }
+    }
+    html += `<h4>Your hypotheses, tested</h4>`;
+    html += an.hyp ? `<ul class="tmm-why">${an.hyp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div class="tmm-sub">Not enough data yet.</div>';
+    if (an.regime) html += `<div class="tmm-sub">Market right now: ${esc(an.regime.label)} (volatility at the ${ordinal(Math.round(an.regime.pct * 100))} percentile).</div>`;
+
+    const decs = (await DB.all('decisions')).filter((d) => d.outcome);
+    html += `<h4>Track record of recommendations</h4>`;
+    if (!decs.length) html += `<div class="tmm-sub">No recommendations have reached their horizon yet.</div>`;
+    else {
+      const mp = decs.reduce((a, d) => a + d.adv, 0) / decs.length;
+      const mr = decs.reduce((a, d) => a + d.outcome.realized, 0) / decs.length;
+      const win = decs.filter((d) => d.outcome.realized > 0).length / decs.length;
+      html += `<div class="tmm-sub">${decs.length} checked. Predicted ${pct(mp)} on average, actually ${pct(mr)}. Right direction ${Math.round(win * 100)}% of the time.${mr < mp / 2 ? ' The model has been over-confident; consider raising the evidence setting.' : ''}</div>`;
+      html += `<div class="tmm-scroll"><table class="tmm-tbl"><tr><th>When</th><th>Trade</th><th>Predicted</th><th>Actual</th><th>You</th></tr>${decs.slice(-10).reverse().map((d) => `<tr><td>${new Date(d.ts * 1000).toLocaleDateString()}</td><td>${esc(d.sellAcr)}→${esc(d.buyAcr)}</td><td>${pct(d.adv)}</td><td class="${d.outcome.realized >= 0 ? 'tmm-pos' : 'tmm-neg'}">${pct(d.outcome.realized)}</td><td>${esc(d.status)}</td></tr>`).join('')}</table></div>`;
+    }
+
+    html += `<h4>All stocks</h4><div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Stock</th><th>Price</th><th>vs normal</th><th>Expected ${hLabel(an.h)}</th><th>Owned</th><th>Spare</th></tr>`;
+    const L = an.market ? liveStocks(an, user) : {};
