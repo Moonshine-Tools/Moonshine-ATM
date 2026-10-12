@@ -249,6 +249,7 @@
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
         DB.add('executions', { t: Date.now(), kind: 'vault', action: 'deposit', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        setTimeout(() => clearBox(input), 400); // Torn leaves the old amount in the box
         showPill(`✓ Deposited to faction vault · cash ${money(c)}`, 'ok');
         const p0 = pill;
         setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);
@@ -359,6 +360,7 @@
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
         DB.add('executions', { t: Date.now(), kind: 'donation', action: 'donate', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        setTimeout(() => clearBox(input), 400);
         showPill(`✓ Donated · cash ${money(c)}`, 'ok');
         const p0 = pill;
         setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);

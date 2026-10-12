@@ -1,3 +1,4 @@
+    <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
 
   let root, sheet, pill = null, moon, menu, watchTimer = null;
   const MOON = 46, EDGE_GAP = 6;

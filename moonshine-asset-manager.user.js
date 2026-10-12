@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.5.1
+// @version      2.5.2
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.5.1';
+  const SCRIPT_VERSION = '2.5.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1020,6 +1020,18 @@
       await sleep(15);
     }
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Empty Torn's box after it's been used, so the old amount isn't left behind.
+  function clearBox(input) {
+    if (!input || !input.isConnected) return;
+    for (const x of boxInputs(input)) {
+      nativeSet(x, '');
+      x.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      x.dispatchEvent(new Event('change', { bubbles: true }));
+      tellReact(x);
+    }
+    input.classList.remove('tmm-filled');
   }
 
   // Replace whatever is in Torn's box with v, then check it actually stuck.
@@ -1986,6 +1998,7 @@
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
         DB.add('executions', { t: Date.now(), kind: 'vault', action: 'deposit', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        setTimeout(() => clearBox(input), 400); // Torn leaves the old amount in the box
         showPill(`✓ Deposited to faction vault · cash ${money(c)}`, 'ok');
         const p0 = pill;
         setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);
@@ -2096,6 +2109,7 @@
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
         DB.add('executions', { t: Date.now(), kind: 'donation', action: 'donate', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        setTimeout(() => clearBox(input), 400);
         showPill(`✓ Donated · cash ${money(c)}`, 'ok');
         const p0 = pill;
         setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);

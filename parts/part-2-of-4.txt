@@ -1,7 +1,3 @@
-      while (round++ < 40) {
-        let work = false;
-        for (let k = 0; k < ids.length; k++) {
-          if (document.visibilityState === 'hidden' && !force) return;
           const sid = ids[k], s = m.stocks[sid];
           const st = prog[sid] || (prog[sid] = {});
           const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };
@@ -341,6 +337,18 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // Empty Torn's box after it's been used, so the old amount isn't left behind.
+  function clearBox(input) {
+    if (!input || !input.isConnected) return;
+    for (const x of boxInputs(input)) {
+      nativeSet(x, '');
+      x.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      x.dispatchEvent(new Event('change', { bubbles: true }));
+      tellReact(x);
+    }
+    input.classList.remove('tmm-filled');
+  }
+
   // Replace whatever is in Torn's box with v, then check it actually stuck.
   async function typeInto(input, v) {
     const str = String(v), want = Number(v);
@@ -554,4 +562,3 @@
   const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
     <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
     <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
-    <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
