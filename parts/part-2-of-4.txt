@@ -1,3 +1,25 @@
+        let work = false;
+        for (let k = 0; k < ids.length; k++) {
+          if (document.visibilityState === 'hidden' && !force) return;
+          const sid = ids[k], s = m.stocks[sid];
+          const st = prog[sid] || (prog[sid] = {});
+          const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };
+          rec.acr = s.acr;
+          const base = `https://tornsy.com/api/${s.acr.toLowerCase()}?interval=h1&limit=2000`;
+          const nowSec = Math.floor(Date.now() / 1000);
+          let pts = [];
+          try {
+            if (!st.newest || nowSec - st.newest > 3600) {
+              const url = st.newest ? `${base}&from=${st.newest}` : base;
+              const j = await httpGetJSON(url);
+              pts = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
+              if (pts.length) {
+                st.newest = Math.max(st.newest || 0, pts[pts.length - 1][0]);
+                st.oldest = Math.min(st.oldest || Infinity, pts[0][0]);
+              }
+              await sleep(1100);
+            }
+            if (!st.done && st.oldest && st.oldest > minT) {
               const j = await httpGetJSON(`${base}&to=${st.oldest}`);
               const older = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
               if (!older.length) st.done = true;
@@ -532,19 +554,3 @@
     <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
     <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
     <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
-
-  let root, sheet, pill = null, moon, menu, watchTimer = null;
-  const MOON = 46, EDGE_GAP = 6;
-
-  const isDark = () => document.body.classList.contains('dark-mode') || document.documentElement.classList.contains('dark-mode');
-  function applyTheme() { if (root) root.dataset.theme = isDark() ? 'dark' : 'light'; }
-
-  function mountUI() {
-    if (document.getElementById('tmm-root')) return;
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
-    root = document.createElement('div');
-    root.id = 'tmm-root';
-    root.innerHTML = `
-      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>

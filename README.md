@@ -111,9 +111,16 @@ Your API key is filled in automatically by Torn PDA.
 Open [this link](https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js) and Tampermonkey will offer to install it. Then open **Market → Settings** and paste a **Limited Access** API key.
 
 ### Updates
-The script checks GitHub for a newer version every 6 hours. When one is out, the Market panel shows **Update available** with an **Update now** button, and the menu shows *(update)* next to Market. You can also check any time in **Market → Settings → Check for updates**. Your settings and price history are kept when you update.
+The script checks GitHub for a newer version every 6 hours. When one is out, the Market panel shows **Update available**, and the menu shows *(update)* next to Market. You can also check any time in **Market → Settings → Check for updates**. Your settings and price history are kept when you update.
 
-Tampermonkey also updates the script automatically.
+**Installing the update in Torn PDA:**
+1. Menu → **Settings → Advanced Browser Settings → Manage scripts**.
+2. Tap the check-for-updates button at the top. A green bar appears: *"1 script update available"*.
+3. Tap **REVIEW**, tick the script and apply. Reload Torn.
+
+This only works if the script was added with **+ → Remote** and the link above. A pasted-in script can't update itself; delete it and add it again from the link.
+
+**Tampermonkey** updates the script automatically, or tap **Update now** to install it straight away.
 
 ---
 

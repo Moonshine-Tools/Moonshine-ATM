@@ -1,3 +1,19 @@
+
+  let root, sheet, pill = null, moon, menu, watchTimer = null;
+  const MOON = 46, EDGE_GAP = 6;
+
+  const isDark = () => document.body.classList.contains('dark-mode') || document.documentElement.classList.contains('dark-mode');
+  function applyTheme() { if (root) root.dataset.theme = isDark() ? 'dark' : 'light'; }
+
+  function mountUI() {
+    if (document.getElementById('tmm-root')) return;
+    const style = document.createElement('style');
+    style.textContent = CSS;
+    document.head.appendChild(style);
+    root = document.createElement('div');
+    root.id = 'tmm-root';
+    root.innerHTML = `
+      <button class="tmm-moon" aria-label="Market manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
       <div class="tmm-menu" hidden>
         <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
         <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
@@ -481,10 +497,3 @@
     const cash = cashNow();
     const has = cash != null && cash > settings.keepOnHand + 1000;
     moon.classList.toggle('has-cash', has);
-    const note = $('[data-note="cash"]', root);
-    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
-    moon.setAttribute('aria-label', 'Market manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
-  }
-  async function updateBadges() {
-    try {
-      if (!apiKey()) return;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Market Manager (all-in-one)
 // @namespace    torn-market-manager
-// @version      2.4.1
+// @version      2.4.2
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.4.1';
+  const SCRIPT_VERSION = '2.4.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -489,9 +489,28 @@
     } catch (e) { store.set('update', Object.assign({}, u || {}, { checked: Date.now(), err: String(e.message || e) })); }
     return updateInfo();
   }
+  const inTornPDA = () => !PDA_KEY.includes('#') || typeof PDA_httpGet === 'function' || !!window.flutter_inappwebview;
   function installUpdate() {
-    // Torn PDA and Tampermonkey both recognise a .user.js link and offer to install it.
-    location.href = UPDATE_URL + '?t=' + Date.now();
+    if (!inTornPDA()) {
+      // Tampermonkey / Violentmonkey offer to install any link ending in .user.js.
+      location.href = UPDATE_URL;
+      return;
+    }
+    // Torn PDA updates remote scripts from its own script manager.
+    const u = updateInfo();
+    const s = openSheet(`
+      <h3>Update in Torn PDA</h3>
+      <div class="tmm-sub">${u ? `Version ${esc(u.latest)} is ready (you have ${SCRIPT_VERSION}).` : 'Torn PDA installs updates from its script manager.'}</div>
+      <ol class="tmm-why">
+        <li>Open Torn PDA's menu (top left) → <b>Settings</b> → <b>Advanced Browser Settings</b> → <b>Manage scripts</b>.</li>
+        <li>Tap the <b>check for updates</b> button at the top. A green bar says <b>"1 script update available"</b>.</li>
+        <li>Tap <b>REVIEW</b>, tick Torn Market Manager and apply.</li>
+        <li>Reload this page.</li>
+      </ol>
+      <div class="tmm-sub">If there's no update bar, the script was pasted in rather than added from its link. Delete it and add it again with <b>+</b> → <b>Remote</b>, using the link below. Your settings and price history are kept.</div>
+      <div class="tmm-row"><button class="tmm-act" id="tmm-cpl">Copy script link</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-cpl', s).onclick = () => { try { navigator.clipboard.writeText(UPDATE_URL); $('#tmm-cpl', s).textContent = 'Copied'; } catch (e) { /* ignore */ } };
+    $('#tmm-x', s).onclick = closeSheet;
   }
 
   // =====================================================================
