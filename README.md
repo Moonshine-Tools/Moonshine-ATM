@@ -8,6 +8,18 @@ It fills in the numbers. **You always press Torn's own Buy, Sell or give button.
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/growth-chart.jpg" alt="Growth chart: your stocks (gold line) against the market (blue dashed line) from Oct 2 to Oct 12. The gold line climbs from about -0.45% to +0.22% after Moonshine's trade suggestions start, while the market drifts down to -0.21%." width="360">
+</p>
+
+**Growth chart, Oct 2 – Oct 12, 2026.** The arrow marks when I started following Moonshine's trade suggestions. Before that, my stocks trailed the market. After 45 rotation trades, they're up **+0.22%** while the market is down **-0.21%**, a lead of **+0.43%**.
+
+*Early days: this is about 10 days of data, and past results don't guarantee future ones.*
+
+---
+
 ## Features
 
 ### 💵 Quick withdraw
