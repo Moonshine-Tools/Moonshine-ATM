@@ -34,7 +34,7 @@ One tap reads the cash you're carrying and buys as many whole shares as it cover
 
 - **Only good buys.** If no stock is expected to rise, it says *No good buys right now* and suggests the faction vault instead of buying into a falling stock.
 - **Leftover cash.** After a purchase, if there's enough left for more shares of a good buy, it offers to buy them. Otherwise it offers the faction vault, or the church for small amounts.
-- **Faction vault.** Deposit to your faction's vault in one tap. The script opens Faction → Armoury → Donate and fills in the money box; you tap Deposit. Only shown if you're in a faction, and not while you're in hospital, jail or traveling.
+- **Faction vault.** Deposit to your faction's vault in one tap. The script opens Faction → Armory (the revolver tab) and fills in the money box; you tap **Deposit Money**. Only shown if you're in a faction, and not while you're in hospital, jail or traveling.
 - **Church.** Cash too small for a share can be donated to the church. The script opens the Donate tab and fills in the amount. Only suggested for small amounts, because a donation gives the money away.
 
 ### 📈 Trade ideas

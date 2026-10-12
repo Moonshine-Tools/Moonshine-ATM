@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Market Manager (all-in-one)
 // @namespace    torn-market-manager
-// @version      2.4.0
+// @version      2.4.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.4.0';
+  const SCRIPT_VERSION = '2.4.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1896,18 +1896,19 @@
   }
 
   // ------------------------------------------------------------ faction vault
-  // Faction → Armoury → Donate. We fill in the money box only; you tap Deposit.
-  const FACTION_URL = 'https://www.torn.com/factions.php?step=your#/tab=armoury&start=0&sub=donate';
+  // Faction → Armory (revolver tab) → Deposit. We fill in the money box only;
+  // you tap DEPOSIT MONEY.
+  const FACTION_URL = 'https://www.torn.com/factions.php?step=your&type=1#faction-armoury';
   const onFactionPage = () => /factions\.php/i.test(location.href);
+  const onArmoury = () => onFactionPage() && /step=your/i.test(location.search) && /armou?ry/i.test(location.hash);
 
   function startVaultDeposit(amount) {
     const job = { action: 'vault', amount: Math.floor(amount), t: Date.now() };
     closeSheet();
-    if (!onFactionPage() || !/sub=donate/i.test(location.hash)) {
+    if (!onArmoury()) {
       sessionStorage.setItem(LS + 'pending', JSON.stringify(job));
-      showPill('Opening the faction vault…');
-      if (onFactionPage()) { location.hash = '#/tab=armoury&start=0&sub=donate'; setTimeout(() => { sessionStorage.removeItem(LS + 'pending'); fillVault(job); }, 600); }
-      else location.href = FACTION_URL;
+      showPill('Opening the faction armory…');
+      location.href = FACTION_URL;
       return;
     }
     fillVault(job);
@@ -1942,22 +1943,22 @@
     if (amount < 1) { showPill('No cash on hand to deposit.'); return; }
     const copy = { label: 'Copy', fn: () => { try { navigator.clipboard.writeText(String(amount)); updatePill(`Copied ${money(amount)} · paste it in the money box`); } catch (e) { /* ignore */ } } };
     showPill(`Faction vault ${money(amount)}`, '', copy);
-    if (!/sub=donate/i.test(location.hash)) { try { location.hash = '#/tab=armoury&start=0&sub=donate'; } catch (e) { /* ignore */ } }
+    if (!/armou?ry/i.test(location.hash)) { try { location.hash = '#faction-armoury'; } catch (e) { /* ignore */ } }
     let input = await waitFor(findVaultInput, 6000);
     if (!input) {
-      // Try the tabs by name: Armoury, then Donate.
-      const tab = (re) => innermost($$('a, li, button, span, div, [role=tab]').filter((el) => !el.closest('#tmm-root') && el.offsetParent !== null && re.test(elText(el))))[0];
-      const arm = tab(/^armou?ry$/i); if (arm) { try { arm.click(); } catch (e) { /* ignore */ } await sleep(600); }
-      const don = tab(/^donate$/i); if (don) { try { don.click(); } catch (e) { /* ignore */ } }
+      // The Armory tab is the revolver icon: find it by its link, not its text.
+      const arm = $$('a, li, button, [role=tab]').find((el) => !el.closest('#tmm-root') &&
+        (/faction-armou?ry/i.test(el.getAttribute('href') || '') || /armou?ry/i.test(el.getAttribute('aria-controls') || '') || /^armou?ry$/i.test(el.getAttribute('title') || el.getAttribute('aria-label') || '')));
+      if (arm) { try { arm.click(); } catch (e) { /* ignore */ } }
       input = await waitFor(findVaultInput, 5000);
     }
     if (!pill) return;
-    if (!input) { updatePill(`Type ${money(amount)} in the faction money box, tap Deposit`); return; }
+    if (!input) { updatePill(`Open Faction → Armory, type ${money(amount)}, tap Deposit Money`); return; }
     input.scrollIntoView({ block: 'center', behavior: 'smooth' });
     const ok = await typeInto(input, amount);
     input.classList.add('tmm-filled');
     setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
-    updatePill(ok ? `${money(amount)} filled in · tap Deposit` : `Type ${money(amount)} in the money box, tap Deposit`);
+    updatePill(ok ? `${money(amount)} filled in · tap Deposit Money` : `Type ${money(amount)} in the money box, tap Deposit Money`);
     const startCash = domCash();
     const started = Date.now();
     watchTimer = setInterval(() => {
