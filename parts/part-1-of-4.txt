@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
-// @namespace    torn-market-manager
-// @version      2.5.0
+// @namespace    moonshine-asset-manager
+// @version      2.5.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tornsy.com
 // @connect      api.torn.com
 // @connect      raw.githubusercontent.com
-// @updateURL    https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
-// @downloadURL  https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
+// @updateURL    https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js
+// @downloadURL  https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js
 // @run-at       document-end
 // ==/UserScript==
 
@@ -363,8 +363,8 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.5.0';
-  const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js';
+  const SCRIPT_VERSION = '2.5.1';
+  const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
   const FEE = Core.FEE;
@@ -679,4 +679,3 @@
       const minT = Math.floor(Date.now() / 1000) - settings.historyDays * 86400;
       const ids = Object.keys(m.stocks);
       let round = 0;
-      while (round++ < 40) {

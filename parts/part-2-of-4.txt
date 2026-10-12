@@ -1,3 +1,4 @@
+      while (round++ < 40) {
         let work = false;
         for (let k = 0; k < ids.length; k++) {
           if (document.visibilityState === 'hidden' && !force) return;

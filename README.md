@@ -98,7 +98,7 @@ Every recommendation is logged. Once its time horizon has passed, the script che
 1. In Torn PDA, open the menu → **Settings → Advanced Browser Settings → Manage scripts** and make sure custom user scripts are on.
 2. Tap **+**, choose the **Remote** tab and paste this link:
    ```
-   https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js
+   https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js
    ```
    Remote install also gets you update notices from Torn PDA.
    - Or paste the code in directly. If your phone can't copy it all at once, use the four files in `parts/`, pasting them one after another in order.
@@ -108,7 +108,7 @@ Every recommendation is logged. Once its time horizon has passed, the script che
 Your API key is filled in automatically by Torn PDA.
 
 ### PC (Tampermonkey / Violentmonkey)
-Open [this link](https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/torn-market-manager.user.js) and Tampermonkey will offer to install it. Then open **Market → Settings** and paste a **Limited Access** API key.
+Open [this link](https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js) and Tampermonkey will offer to install it. Then open **Market → Settings** and paste a **Limited Access** API key.
 
 ### Updates
 The script checks GitHub for a newer version every 6 hours. When one is out, the Market panel shows **Update available**, and the menu shows *(update)* next to Market. You can also check any time in **Market → Settings → Check for updates**. Your settings and price history are kept when you update.
@@ -162,7 +162,7 @@ This only works if the script was added with **+ → Remote** and the link above
 
 ## Publishing an update
 
-1. Change the `@version` line at the top of `torn-market-manager.user.js`, for example `2.3.0` → `2.3.1`.
+1. Change the `@version` line at the top of `moonshine-asset-manager.user.js`, for example `2.3.0` → `2.3.1`.
 2. Change `SCRIPT_VERSION` near the top of the code to the same number.
 3. Upload the new file to the `main` branch of this repository.
 
