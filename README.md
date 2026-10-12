@@ -1,2 +1,136 @@
-# Moonshine-Asset-Managee
-Torn PDA userscript that turns your stocks into a bank. Quickly buy stocks or deposit cash to your faction bank, and withdraw by selling stocks whose gains beat the 0.1% fee so you don't sell at a loss. Learns price patterns,  suggests smart buy/sell trades and charts your growth vs the market. You always tap Torn's buttons.
+# 🌙 Moonshine Asset Management
+
+**An all-in-one stock market tool for Torn City, built for Torn PDA.**
+
+In Torn, cash on hand gets mugged, so most players keep their money in the stock market. Moonshine makes that fast and smart. Get cash out in a couple of taps, put it back just as quickly, and let the script look for small, tested trades that can grow your money faster than the market.
+
+It fills in the numbers. **You always press Torn's own Buy, Sell or give button.**
+
+---
+
+## Features
+
+### 💵 Quick withdraw
+Type how much cash you need, like `5m`, `750k` or `1.2b`. The script picks which stock to sell, opens its panel and fills in the exact number of shares, including the 0.1% selling fee and a small safety margin for price changes.
+
+- It sells the stock with the weakest outlook first.
+- It never sells shares that are holding a benefit block. If it can't avoid that, it warns you and offers other stocks.
+- If no single stock has enough spare shares, it splits the withdrawal into separate sales and walks you through each one.
+
+### 🏦 Quick deposit
+One tap reads the cash you're carrying and buys as many whole shares as it covers of the stock with the best outlook. Extra weight goes to purchases that complete a benefit block. Leftover cash too small to buy even one share can be **donated to the church** in one tap: the script opens the church's Donate tab and fills in the amount for you.
+
+### 📈 Trade ideas
+The script looks for chances to **sell a little of one stock and buy another** for a small expected gain. Each idea shows:
+
+- How much to sell and what to buy
+- The estimated gain after the fee
+- How strong the evidence is
+- A plain-English reason, such as *"ABC is 2.1 standard deviations below its 7-day normal price; when it was here before, it rose 68% of the time"*
+
+You confirm the sale, then confirm the purchase. Nothing happens without your two taps.
+
+### 📊 Growth tracking
+A chart shows how your stocks have grown compared with the whole market, over 1 day, 7 days, 30 days or all time. It ignores cash you add or take out, so a withdrawal never looks like a loss. If your line stays above the market's over weeks, your trades are working.
+
+### 🌙 Out of the way
+Everything sits behind one small moon icon. Drag it to any edge of the screen. Tap it to open **Market**, **Withdraw** and **Deposit**.
+
+- 🟠 An orange dot means you're carrying cash.
+- 🟢 A green dot means there's a trade idea.
+
+The panels follow Torn's light or dark mode, and they collapse into a thin bar at the top so they never cover Torn's buttons.
+
+---
+
+## How it works
+
+### 1. Collecting prices
+- **From Torn:** While any Torn page is open, the script reads stock prices from the official Torn API about once a minute and saves them on your phone.
+- **History:** On first run it downloads up to 2 years of hourly prices from [tornsy.com](https://tornsy.com/api), a free public Torn stock-history site. This takes about 5–10 minutes with Torn open, and picks up where it left off if interrupted.
+- **Storage:** Raw minute prices are kept for 90 days. Hourly prices are kept indefinitely. Nothing is sent to any server of ours; there isn't one.
+
+### 2. Learning each stock's personality
+For every stock, the script tracks its **normal price** (a 7-day moving average) and how far it usually strays from it. Every price is turned into a score: how many of its own standard deviations it is above or below normal. A 3% move is huge for a calm stock and ordinary for a jumpy one, and the score accounts for that.
+
+It then looks back through history: *when this stock was this far from normal, what happened over the next 6 hours, 1 day and 7 days?* The cut-offs for "far from normal" come from the data, not fixed rules. Stocks with little history of their own lean on market-wide patterns until they have enough examples.
+
+### 3. Testing itself
+Before it recommends anything, the model has to prove itself on data it hasn't seen:
+
+1. It learns from the first 70% of the price history.
+2. It's tested on the last 30%, against buy-and-hold, a momentum strategy and a simple "buy the dip" strategy, with fees charged on every sale.
+3. To pass, it must:
+   - rank stocks better than chance,
+   - beat buy-and-hold after fees,
+   - and keep beating it in at least 5 of 9 different settings, so one lucky setting can't fake a pass.
+
+If it doesn't pass, the Market panel shows **No action** and explains why. On purely random prices, the model correctly fails.
+
+### 4. Finding a trade
+Every few minutes it compares every pair of stocks: *is the expected return of B, minus the expected return of A, minus the 0.1% fee, big enough and certain enough to be worth moving money?* The size of the trade grows with the strength of the evidence, and one stock can't take more than 40% of your portfolio. If nothing clears the bar, it shows the closest idea and how far it is from qualifying.
+
+### 5. Learning from results
+Every recommendation is logged. Once its time horizon has passed, the script checks what actually happened and shows the track record in **Market → Details**: predicted versus actual gain, and how often it was right.
+
+---
+
+## Installation
+
+### Torn PDA (Android / iOS)
+1. In Torn PDA, open the menu → **Settings → Advanced Browser Settings → Manage scripts** and make sure custom user scripts are on.
+2. Tap **+**, choose the **Remote** tab and paste the raw link to `torn-market-manager.user.js` from this repository. Remote install also gets you updates.
+   - Or paste the code in directly. If your phone can't copy it all at once, use the four files in `parts/`, pasting them one after another in order.
+3. Set injection time to **End** if asked, then save.
+4. Open any Torn page. The 🌙 appears on the right edge.
+
+Your API key is filled in automatically by Torn PDA.
+
+### PC (Tampermonkey / Violentmonkey)
+Install the script from the raw link, then open **Market → Settings** and paste a **Limited Access** API key.
+
+---
+
+## Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| Keep cash on hand | $0 | Cash that Deposit leaves in your pocket |
+| Parking stock | none | Where deposits go while the model is still learning |
+| Never trade these | none | Stocks the script will never buy or sell |
+| Price safety margin | 0.25% | Extra room so a price tick doesn't leave you short |
+| Minimum gain after fees | 0.25% | Smallest expected gain worth suggesting |
+| Evidence required | 1.2× | How much bigger the gain must be than its uncertainty |
+| Most in one stock | 40% | Cap on any single stock's share of your portfolio |
+| Smallest trade | $250k | Trades smaller than this aren't suggested |
+| Days of history | 730 | How far back to download prices |
+
+---
+
+## Rules and privacy
+
+- **Follows Torn's scripting rules.** The script never presses Buy, Sell, Confirm, Yes or give, and never sends a trade request. It only opens panels and types numbers into boxes, the same as you would.
+- **Read-only API.** It only reads from the official Torn API, at about two calls a minute.
+- **Stays on your phone.** Your key and data are stored on your device. The only outside site contacted is tornsy.com, for public price history, and no key or personal data is sent there.
+- **Checks before you confirm.** When Torn asks "Are you sure you want to sell N shares", the script checks N against its own number and warns you if they differ.
+
+---
+
+## Limitations
+
+- **Only runs with Torn open.** Torn PDA can't run scripts in the background. Gaps are filled from tornsy.com history.
+- **Benefits are protected, not valued.** The script never sells shares a benefit needs, but it doesn't put a dollar value on benefits.
+- **No guarantees.** Past patterns may not repeat. If the market has no reliable edge, the honest answer is **No action**, and the script will give it.
+- **Torn's pages can change.** If a box can't be found, the script tells you the number to type and offers a Copy button.
+
+---
+
+## Roadmap
+
+- [ ] Quick deposit to your faction bank
+- [ ] Withdraw from stocks that are up by more than the 0.1% fee first, using your purchase prices
+- [ ] Put a value on stock benefits in trade decisions
+
+---
+
+*Built for fun. It's a game: trade wisely, and keep an eye on the numbers before you tap confirm.*
