@@ -5,12 +5,13 @@
         ${kv(`Withdrawals (${W.wdN})`, money(W.wd))}
         ${kv('Withdrawn per week (average)', money(W.weekly))}
         ${kv('Most drawn at once', money(W.used))}
+        ${W.typical ? kv('Typical withdrawal', money(W.typical)) : ''}
         ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
         ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
       </table>
       ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
       ${advice}
-      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), rounded up to the next $1M.</div></div>`;
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), and at least 5 × your typical withdrawal, rounded up to the next $1M.</div></div>`;
   }
 
   async function showAdvisor() {
@@ -150,7 +151,7 @@
           return showError(plan.error);
         }
         if (plan.noGood) return showNoGoodBuys(job, plan);
-        const spread = planSpread(cash, base, user);
+        const spread = planSpread(cash, base, user, await typicalWithdrawal());
         if (spread && plan.avail > (settings.maxWeightPct / 100) * spread.total) return showSpread(job, spread, plan);
         return showQuick(job, plan, 0, 'buy');
       }
@@ -573,7 +574,7 @@
   function showSpread(job, plan, single) {
     const s = openSheet(`
       <h3>Spread ${money(plan.spend)} over ${plan.legs.length} stocks</h3>
-      <div class="tmm-sub">That's too much for one stock: it would put more than ${settings.maxWeightPct}% of your portfolio in it. Spreading it gives the trade ideas more stocks to see-saw between. These have the best outlook right now, and the smallest holdings get topped up first.</div>
+      <div class="tmm-sub">That's too much for one stock: it would put more than ${settings.maxWeightPct}% of your portfolio in it. Spreading it gives the trade ideas more stocks to see-saw between. These have the best outlook right now, and the smallest holdings get topped up first.${plan.typical > SPREAD_PER_STOCK ? ` Each stock gets at least about ${money(plan.perStock)}, your typical withdrawal, so a withdrawal can come from a single stock.` : ''}</div>
       <table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>Cost</th><th>Outlook</th></tr>
         ${plan.legs.map((o) => `<tr><td>${esc(o.s.acr)}</td><td>${num(o.shares)}</td><td>${money(o.shares * o.price)}</td><td class="tmm-pos">${pct(o.pred.mean)}</td></tr>`).join('')}
       </table>

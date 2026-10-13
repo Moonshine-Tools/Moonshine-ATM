@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.5.0
+// @version      3.6.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.5.0';
+  const SCRIPT_VERSION = '3.6.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1518,7 +1518,20 @@
   // enough stocks that none is over the "most in one stock" limit, and more as
   // the money grows (about $1M+ per stock), topping up the smallest first.
   const SPREAD_PER_STOCK = 1e6;
-  function planSpread(cash, an, user) {
+  // Your typical withdrawal: the size 3 out of 4 of your withdrawals (last 60 days) fall under.
+  function typicalOf(amounts) {
+    if (amounts.length < 3) return 0;
+    const a = amounts.slice().sort((x, y) => x - y);
+    return a[Math.min(a.length - 1, Math.floor(a.length * 0.75))];
+  }
+  async function typicalWithdrawal() {
+    try {
+      const since = Date.now() - 60 * 86400000;
+      const ex = await DB.all('executions');
+      return typicalOf(ex.filter((e) => e.kind === 'cash' && e.action === 'sell' && e.t > since && e.cashAfter != null).map((e) => Math.abs(e.cashAfter - e.cashBefore)));
+    } catch (e) { return 0; }
+  }
+  function planSpread(cash, an, user, typical = 0) {
     if (!modelUsable(an)) return null;
     const avail = cash - settings.keepOnHand;
     const buf = 1 + settings.bufferPct / 100;
@@ -1528,7 +1541,9 @@
     const cands = Object.values(L)
       .filter((x) => x.allowed && x.pred && x.pred.mean > 0 && !(settings.depositOwnedOnly && !x.owned))
       .sort((a, b) => b.pred.mean - a.pred.mean);
-    const want = Math.max(Math.ceil(1 / maxW), Math.min(40, Math.floor(total / SPREAD_PER_STOCK)));
+    // Each holding should be at least $1M and at least your typical withdrawal, so a withdrawal can come from one stock.
+    const perStock = Math.max(SPREAD_PER_STOCK, typical);
+    const want = Math.max(Math.ceil(1 / maxW), Math.min(40, Math.floor(total / perStock)));
     const chosen = cands.slice(0, Math.min(cands.length, want));
     if (chosen.length < 2) return null;
     const cap = maxW * total;
@@ -1545,7 +1560,7 @@
     });
     if (legs.length < 2) return null;
     const spend = legs.reduce((a, o) => a + o.shares * o.price, 0);
-    return { legs, alts: [], mode: 'model', spread: true, avail, total, spend, left: avail - spend, good: cands.length };
+    return { legs, alts: [], mode: 'model', spread: true, avail, total, spend, left: avail - spend, good: cands.length, perStock, typical };
   }
 
   function planDeposit(cash, an, user) {
@@ -2397,7 +2412,9 @@
     const weekly = wd / (Math.max(days, 7) / 7);
     const termWeeks = Math.max(1, Math.floor(r.days / 7));
     const need = weekly * 1.5 * termWeeks;
-    const rec = Math.ceil((KEEP_MIN + Math.max(used, need)) / 1e6) * 1e6;
+    // And enough for 5 stocks each holding a typical withdrawal, so withdrawals can pick a stock in profit.
+    const typical = typicalOf(ev.filter((e) => e.action === 'sell').map((e) => Math.abs(e.cashAfter - e.cashBefore)));
+    const rec = Math.ceil(Math.max(KEEP_MIN + Math.max(used, need), 5 * typical) / 1e6) * 1e6;
     // Growth of your stocks from price changes over the last week and 2 months.
     const growth = [];
     if (an && an.S) {
@@ -2413,7 +2430,7 @@
         growth.push({ label: have < d - 1 ? `${label} (${Math.max(1, Math.round(have))} days of data)` : label, gain: g, pct: v0 > 0 ? g / v0 : null });
       }
     }
-    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, weekly, termWeeks, need, termName: TERM_NAME[r.term], any: ev.length > 0 };
+    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, weekly, termWeeks, need, typical, termName: TERM_NAME[r.term], any: ev.length > 0 };
   }
 
   function walletCard(W) {
@@ -2424,9 +2441,11 @@
     let advice;
     if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
     else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
-    else advice = `<div class="tmm-sub">${W.need >= W.used
+    else advice = `<div class="tmm-sub">${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need)
+          ? `Your typical withdrawal is <b>${money(W.typical)}</b>. Keeping 5 stocks that size lets each withdrawal come from one stock that's in profit, so`
+          : W.need >= W.used
           ? `You withdraw about <b>${money(W.weekly)}</b> a week. Covering a ${W.termName} term (${W.termWeeks} week${W.termWeeks > 1 ? 's' : ''}) with 50% to spare takes ${money(W.need)}.`
-          : `You've drawn up to <b>${money(W.used)}</b> at once.`} With ${money(KEEP_MIN)} for trading, ${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
+          : `You've drawn up to <b>${money(W.used)}</b> at once.`} ${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need) ? '' : `With ${money(KEEP_MIN)} for trading, `}${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
         <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
     return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
       <table class="tmm-tbl">
@@ -2434,12 +2453,13 @@
         ${kv(`Withdrawals (${W.wdN})`, money(W.wd))}
         ${kv('Withdrawn per week (average)', money(W.weekly))}
         ${kv('Most drawn at once', money(W.used))}
+        ${W.typical ? kv('Typical withdrawal', money(W.typical)) : ''}
         ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
         ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
       </table>
       ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
       ${advice}
-      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), rounded up to the next $1M.</div></div>`;
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), and at least 5 × your typical withdrawal, rounded up to the next $1M.</div></div>`;
   }
 
   async function showAdvisor() {
@@ -2579,7 +2599,7 @@
           return showError(plan.error);
         }
         if (plan.noGood) return showNoGoodBuys(job, plan);
-        const spread = planSpread(cash, base, user);
+        const spread = planSpread(cash, base, user, await typicalWithdrawal());
         if (spread && plan.avail > (settings.maxWeightPct / 100) * spread.total) return showSpread(job, spread, plan);
         return showQuick(job, plan, 0, 'buy');
       }
@@ -3002,7 +3022,7 @@
   function showSpread(job, plan, single) {
     const s = openSheet(`
       <h3>Spread ${money(plan.spend)} over ${plan.legs.length} stocks</h3>
-      <div class="tmm-sub">That's too much for one stock: it would put more than ${settings.maxWeightPct}% of your portfolio in it. Spreading it gives the trade ideas more stocks to see-saw between. These have the best outlook right now, and the smallest holdings get topped up first.</div>
+      <div class="tmm-sub">That's too much for one stock: it would put more than ${settings.maxWeightPct}% of your portfolio in it. Spreading it gives the trade ideas more stocks to see-saw between. These have the best outlook right now, and the smallest holdings get topped up first.${plan.typical > SPREAD_PER_STOCK ? ` Each stock gets at least about ${money(plan.perStock)}, your typical withdrawal, so a withdrawal can come from a single stock.` : ''}</div>
       <table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>Cost</th><th>Outlook</th></tr>
         ${plan.legs.map((o) => `<tr><td>${esc(o.s.acr)}</td><td>${num(o.shares)}</td><td>${money(o.shares * o.price)}</td><td class="tmm-pos">${pct(o.pred.mean)}</td></tr>`).join('')}
       </table>

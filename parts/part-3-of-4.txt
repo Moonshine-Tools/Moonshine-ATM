@@ -646,7 +646,9 @@
     const weekly = wd / (Math.max(days, 7) / 7);
     const termWeeks = Math.max(1, Math.floor(r.days / 7));
     const need = weekly * 1.5 * termWeeks;
-    const rec = Math.ceil((KEEP_MIN + Math.max(used, need)) / 1e6) * 1e6;
+    // And enough for 5 stocks each holding a typical withdrawal, so withdrawals can pick a stock in profit.
+    const typical = typicalOf(ev.filter((e) => e.action === 'sell').map((e) => Math.abs(e.cashAfter - e.cashBefore)));
+    const rec = Math.ceil(Math.max(KEEP_MIN + Math.max(used, need), 5 * typical) / 1e6) * 1e6;
     // Growth of your stocks from price changes over the last week and 2 months.
     const growth = [];
     if (an && an.S) {
@@ -662,7 +664,7 @@
         growth.push({ label: have < d - 1 ? `${label} (${Math.max(1, Math.round(have))} days of data)` : label, gain: g, pct: v0 > 0 ? g / v0 : null });
       }
     }
-    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, weekly, termWeeks, need, termName: TERM_NAME[r.term], any: ev.length > 0 };
+    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, weekly, termWeeks, need, typical, termName: TERM_NAME[r.term], any: ev.length > 0 };
   }
 
   function walletCard(W) {
@@ -673,6 +675,8 @@
     let advice;
     if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
     else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
-    else advice = `<div class="tmm-sub">${W.need >= W.used
+    else advice = `<div class="tmm-sub">${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need)
+          ? `Your typical withdrawal is <b>${money(W.typical)}</b>. Keeping 5 stocks that size lets each withdrawal come from one stock that's in profit, so`
+          : W.need >= W.used
           ? `You withdraw about <b>${money(W.weekly)}</b> a week. Covering a ${W.termName} term (${W.termWeeks} week${W.termWeeks > 1 ? 's' : ''}) with 50% to spare takes ${money(W.need)}.`
-          : `You've drawn up to <b>${money(W.used)}</b> at once.`} With ${money(KEEP_MIN)} for trading, ${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
+          : `You've drawn up to <b>${money(W.used)}</b> at once.`} ${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need) ? '' : `With ${money(KEEP_MIN)} for trading, `}${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
