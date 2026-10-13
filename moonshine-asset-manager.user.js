@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.9.0
+// @version      2.9.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -290,7 +290,7 @@
     // "minimum gain" and "evidence" settings and compare with buy-and-hold.
     // Recommends the most cautious setting that's within a whisker of the
     // best, because the very best result on past data is partly luck.
-    const TUNE_EDGES = [0.001, 0.0015, 0.0025, 0.0035, 0.005, 0.01];
+    const TUNE_EDGES = [0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.005, 0.01];
     const TUNE_TS = [0, 0.8, 1.2, 2];
     function tune(S, h = 24) {
       const [a, b] = range(S);
@@ -382,7 +382,7 @@
       return best;
     }
 
-    return { VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, tune, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
+    return { TUNE_EDGES, TUNE_TS, VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, tune, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
   })();
 
   if (typeof window === 'undefined') { if (typeof module !== 'undefined') module.exports = Core; return; }
@@ -400,7 +400,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.9.0';
+  const SCRIPT_VERSION = '2.9.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1766,7 +1766,7 @@
       $('#tmm-tune-run', box).onclick = () => run();
     };
     const run = async () => {
-      box.innerHTML = `<div class="tmm-sub">Testing ${6 * 4} combinations on past data… this can take a few seconds.</div>`;
+      box.innerHTML = `<div class="tmm-sub">Testing ${Core.TUNE_EDGES.length * Core.TUNE_TS.length} combinations on past data… this can take a few seconds.</div>`;
       await sleep(50);
       const r = Core.tune(an.S, an.h || 24);
       await DB.setMeta('tune', r);

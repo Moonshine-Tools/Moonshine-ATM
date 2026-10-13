@@ -412,7 +412,7 @@
       $('#tmm-tune-run', box).onclick = () => run();
     };
     const run = async () => {
-      box.innerHTML = `<div class="tmm-sub">Testing ${6 * 4} combinations on past data… this can take a few seconds.</div>`;
+      box.innerHTML = `<div class="tmm-sub">Testing ${Core.TUNE_EDGES.length * Core.TUNE_TS.length} combinations on past data… this can take a few seconds.</div>`;
       await sleep(50);
       const r = Core.tune(an.S, an.h || 24);
       await DB.setMeta('tune', r);
