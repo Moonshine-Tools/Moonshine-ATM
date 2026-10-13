@@ -1,81 +1,3 @@
-    $('#tmm-x', s).onclick = closeSheet;
-  }
-
-  // =====================================================================
-  //  DATABASE (IndexedDB, on your phone)
-  // =====================================================================
-  const DB = (() => {
-    let dbp = null;
-    function open() {
-      if (dbp) return dbp;
-      dbp = new Promise((res, rej) => {
-        const r = indexedDB.open('torn_market_mgr', 1);
-        r.onupgradeneeded = () => {
-          const d = r.result;
-          d.createObjectStore('hourly', { keyPath: 'sid' });          // per stock: {sid, acr, t:[], c:[]}
-          d.createObjectStore('minute', { keyPath: 't' });           // raw: {t, p:{sid:price}}
-          d.createObjectStore('meta', { keyPath: 'k' });
-          d.createObjectStore('decisions', { keyPath: 'id', autoIncrement: true });
-          d.createObjectStore('executions', { keyPath: 'id', autoIncrement: true });
-          d.createObjectStore('snapshots', { keyPath: 't' });
-        };
-        r.onsuccess = () => res(r.result);
-        r.onerror = () => rej(r.error);
-      });
-      return dbp;
-    }
-    const p = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-    async function tx(name, mode, fn) {
-      const d = await open();
-      const t = d.transaction(name, mode);
-      const out = fn(t.objectStore(name));
-      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
-      return out instanceof Promise ? out : out;
-    }
-    return {
-      get: (n, k) => tx(n, 'readonly', (s) => p(s.get(k))),
-      put: (n, v) => tx(n, 'readwrite', (s) => p(s.put(v))),
-      add: (n, v) => tx(n, 'readwrite', (s) => p(s.add(v))),
-      all: (n, range) => tx(n, 'readonly', (s) => p(s.getAll(range))),
-      count: (n) => tx(n, 'readonly', (s) => p(s.count())),
-      delBelow: (n, k) => tx(n, 'readwrite', (s) => p(s.delete(IDBKeyRange.upperBound(k, true)))),
-      clear: (n) => tx(n, 'readwrite', (s) => p(s.clear())),
-      async meta(k, d = null) { const r = await this.get('meta', k); return r ? r.v : d; },
-      setMeta(k, v) { return this.put('meta', { k, v }); },
-    };
-  })();
-
-  function mergeSeries(rec, points) {
-    const m = new Map();
-    for (let i = 0; i < rec.t.length; i++) m.set(rec.t[i], rec.c[i]);
-    for (const [t, c] of points) if (c > 0) m.set(t, c);
-    const ts = Array.from(m.keys()).sort((a, b) => a - b);
-    rec.t = ts; rec.c = ts.map((t) => m.get(t));
-    return rec;
-  }
-
-  // =====================================================================
-  //  TORN DATA
-  // =====================================================================
-  let marketMem = null;
-  async function getMarket(maxAgeSec = 60) {
-    const cached = marketMem || store.get('market', null);
-    if (cached && Date.now() - cached.t < maxAgeSec * 1000) return (marketMem = cached);
-    const j = await api('torn/?selections=stocks');
-    const stocks = {};
-    for (const [id, s] of Object.entries(j.stocks || {})) {
-      stocks[id] = { id: String(s.stock_id || id), acr: s.acronym, name: s.name, price: Number(s.current_price), cap: Number(s.market_cap) || 0, benefit: s.benefit || null };
-    }
-    marketMem = { t: Date.now(), stocks };
-    store.set('market', marketMem);
-    return marketMem;
-  }
-
-  let userMem = null;
-  async function getUser(maxAgeSec = 20) {
-    if (userMem && Date.now() - userMem.t < maxAgeSec * 1000) return userMem;
-    const j = await api('user/?selections=stocks,money,profile');
-    const owned = {};
     const us = j.stocks && typeof j.stocks === 'object' ? j.stocks : {};
     const cost = {};
     for (const [id, s] of Object.entries(us)) {
@@ -95,7 +17,64 @@
       factionId: Number(j.faction && j.faction.faction_id) || 0,
       state: String((j.status && j.status.state) || 'Okay'),
     };
+    // City Bank investment: how much is in it and when the term ends.
+    if (j.city_bank && typeof j.city_bank === 'object') {
+      const left = Number(j.city_bank.time_left) || 0;
+      userMem.bank = { amount: Number(j.city_bank.amount) || 0, endsAt: left > 0 ? Date.now() + left * 1000 : 0 };
+      store.set('bank', userMem.bank);
+    }
     return userMem;
+  }
+
+  // ---- City Bank ------------------------------------------------------
+  const BANK_URL = 'https://www.torn.com/bank.php';
+  const TERM_DAYS = { '1w': 7, '2w': 14, '1m': 30, '2m': 60, '3m': 90 };
+  const TERM_NAME = { '1w': '1-week', '2w': '2-week', '1m': '1-month', '2m': '2-month', '3m': '3-month' };
+
+  // Torn's base rates (all players) and your Bank Interest merits (+5% of the interest each).
+  async function getBankRates(force = false) {
+    const c = store.get('bankRates', null);
+    if (!force && c && c.rates && Date.now() - c.t < 6 * 3600000) return c;
+    let rates = null, merits = c ? c.merits || 0 : 0;
+    try {
+      const j = await api('torn/?selections=bank');
+      const b = j.bank || {};
+      rates = {};
+      for (const k of Object.keys(TERM_DAYS)) { const v = parseFloat(b[k]); if (Number.isFinite(v) && v > 0) rates[k] = v < 2 ? v * 100 : v; }
+      if (!Object.keys(rates).length) rates = null;
+    } catch (e) { /* rate unknown; the advisor asks for it */ }
+    try {
+      const j = await api('user/?selections=merits');
+      const m = j.merits || {};
+      merits = Number(m['Bank Interest'] ?? m.bank_interest ?? m.bankInterest) || 0;
+    } catch (e) { /* keep the last known value */ }
+    const out = { t: Date.now(), rates: rates || (c && c.rates) || null, merits };
+    if (out.rates) store.set('bankRates', out);
+    return out;
+  }
+
+  function termRate(br) {
+    const term = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+    const days = TERM_DAYS[term];
+    const own = parseFloat(settings.bankApr);
+    if (own > 0) return { term, days, apr: own, src: 'from your Settings' };
+    const base = br && br.rates && br.rates[term];
+    if (!base) return { term, days, apr: null };
+    const m = (br && br.merits) || 0;
+    return { term, days, apr: base * (1 + 0.05 * m), src: m ? `Torn's ${base.toFixed(2)}% plus your ${m} Bank Interest merit${m > 1 ? 's' : ''}` : "Torn's current rate" };
+  }
+  const interest = (amt, r) => (r.apr ? amt * (r.apr / 100) * (r.days / 365) : 0);
+
+  function bankState() {
+    const b = (userMem && userMem.bank) || store.get('bank', null);
+    if (!b) return null;
+    if (!(b.amount > 0)) return { state: 'none', amount: 0 };
+    if (b.endsAt > Date.now()) return { state: 'active', amount: b.amount, endsAt: b.endsAt };
+    return { state: 'ended', amount: b.amount };
+  }
+  function timeLeft(ms) {
+    const m = Math.max(0, Math.round(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m % 60}m`;
   }
 
   // =====================================================================
@@ -738,12 +717,13 @@
   #tmm-root .tmm-dot{position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #121a30;display:none}
   #tmm-root .tmm-dot.opp{top:-2px;right:-2px;background:#3fd17a}
   #tmm-root .tmm-dot.cash{bottom:-2px;left:-2px;background:#ff9a2e}
-  #tmm-root .tmm-moon.has-opp .tmm-dot.opp,#tmm-root .tmm-moon.has-cash .tmm-dot.cash{display:block}
+  #tmm-root .tmm-dot.bank{top:-2px;left:-2px;background:#b98cff}
+  #tmm-root .tmm-moon.has-opp .tmm-dot.opp,#tmm-root .tmm-moon.has-cash .tmm-dot.cash,#tmm-root .tmm-moon.has-bank .tmm-dot.bank{display:block}
   #tmm-root .tmm-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:6px}
   #tmm-root .tmm-menu[hidden]{display:none}
   #tmm-root .tmm-mi-note{font-weight:400;font-size:12px;opacity:.9;margin-left:6px}
   #tmm-root .tmm-mi{border:0;border-radius:20px;padding:10px 15px;font-weight:600;font-size:14px;line-height:1;color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;text-align:left}
-  #tmm-root .tmm-mi.m{background:#2c3e66} #tmm-root .tmm-mi.w{background:#2a8450} #tmm-root .tmm-mi.d{background:#2f6d9c}
+  #tmm-root .tmm-mi.m{background:#2c3e66} #tmm-root .tmm-mi.w{background:#2a8450} #tmm-root .tmm-mi.d{background:#2f6d9c} #tmm-root .tmm-mi.b{background:#5b3f8c}
   #tmm-root .tmm-mi:focus-visible,#tmm-root .tmm-moon:focus-visible,#tmm-root button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
   #tmm-root .tmm-sheet{position:fixed;z-index:99999;left:0;right:0;bottom:0;background:var(--bg);color:var(--ink);border-top:3px solid var(--brass);border-radius:14px 14px 0 0;
     padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 16px);max-height:82vh;overflow:auto;box-shadow:0 -6px 24px var(--shadow)}
@@ -757,3 +737,40 @@
   #tmm-root .tmm-warn{color:var(--warn);font-weight:600;margin:6px 0} #tmm-root .tmm-err{color:var(--neg);font-weight:600;margin:6px 0} #tmm-root .tmm-ok{color:var(--pos);font-weight:600;margin:6px 0}
   #tmm-root .tmm-status{margin:10px 0;padding:10px;border-left:3px solid var(--brass);background:var(--bg2);color:var(--ink)}
   #tmm-root .tmm-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
+  #tmm-root .tmm-chip{background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:7px 12px;font-size:14px;cursor:pointer}
+  #tmm-root .tmm-input{width:100%;font-size:20px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink)}
+  #tmm-root .tmm-act{background:var(--brass);color:var(--onbrass);border:0;border-radius:8px;padding:11px 16px;font-weight:700;font-size:15px;line-height:1;cursor:pointer}
+  #tmm-root .tmm-plain{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer}
+  #tmm-root .tmm-tabs{display:flex;gap:4px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
+  #tmm-root .tmm-tab{background:none;border:0;color:var(--muted);padding:8px 12px;font-weight:600;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+  #tmm-root .tmm-tab[aria-selected=true]{color:var(--head);border-bottom-color:var(--brass)}
+  #tmm-root .tmm-kpis{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+  #tmm-root .tmm-kpis b{display:block;font-size:17px;color:var(--head)} #tmm-root .tmm-kpis span{color:var(--muted);font-size:12px}
+  #tmm-root .tmm-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:transparent}
+  #tmm-root .tmm-tbl th,#tmm-root .tmm-tbl td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--ink);background:transparent}
+  #tmm-root .tmm-tbl th:first-child,#tmm-root .tmm-tbl td:first-child{text-align:left} #tmm-root .tmm-tbl th{color:var(--muted);font-weight:600}
+  #tmm-root .tmm-scroll{overflow-x:auto}
+  #tmm-root .tmm-field{margin:9px 0} #tmm-root .tmm-field label{display:block;color:var(--muted);margin-bottom:3px}
+  #tmm-root .tmm-field input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--field);color:var(--ink);font-size:15px}
+  #tmm-root .tmm-check{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--ink)}
+  #tmm-root .tmm-pos,#tmm-root .tmm-tbl td.tmm-pos,#tmm-root .tmm-kpis b.tmm-pos{color:var(--pos)} #tmm-root .tmm-neg,#tmm-root .tmm-tbl td.tmm-neg,#tmm-root .tmm-kpis b.tmm-neg{color:var(--neg)}
+  #tmm-root .tmm-chart-wrap{position:relative}
+  #tmm-root .tmm-chart{display:block;width:100%;height:auto;touch-action:pan-y}
+  #tmm-root .tmm-c-grid{stroke:var(--line);stroke-width:1}
+  #tmm-root .tmm-c-zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+  #tmm-root .tmm-c-ax{fill:var(--muted);font-size:10px}
+  #tmm-root .tmm-c-lab{fill:var(--ink);font-size:10px;font-weight:600}
+  #tmm-root .tmm-c-you{fill:none;stroke:var(--you);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  #tmm-root .tmm-c-mkt{fill:none;stroke:var(--mkt);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:5 3}
+  #tmm-root .tmm-c-x{stroke:var(--muted);stroke-width:1}
+  #tmm-root .tmm-c-tip{position:absolute;top:0;width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;line-height:1.35;pointer-events:none;box-shadow:0 2px 8px var(--shadow)}
+  #tmm-root .tmm-c-legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:4px}
+  #tmm-root .tmm-c-sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--you);vertical-align:middle;margin-right:5px}
+  #tmm-root .tmm-c-sw.mkt{border-top:2px dashed var(--mkt)}
+  #tmm-root .tmm-chip[aria-pressed=true]{border-color:var(--brass);color:var(--head);font-weight:600}
+  #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
+  #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
+    background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
+  #tmm-root .tmm-pill.card{display:block;border-radius:14px;padding:6px 6px 8px 12px;width:calc(100vw - 20px);max-width:520px}
+  #tmm-root .tmm-pill-row{display:flex;gap:6px;align-items:center}
+  #tmm-root .tmm-pill-row .tmm-pill-t{flex:1}

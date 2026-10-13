@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.0.1
+// @version      3.1.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.0.1';
+  const SCRIPT_VERSION = '3.1.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -647,6 +647,10 @@
     maxWeightPct: 20,
     minTrade: 250000,
     showUnvalidated: false,
+    bankKeep: 10000000,
+    bankTerm: '2m',
+    bankApr: '',
+    bankDot: true,
   };
 
   const store = {
@@ -776,3 +780,81 @@
       <div class="tmm-sub">If there's no update bar, the script was pasted in rather than added from its link. Delete it and add it again with <b>+</b> → <b>Remote</b>, using the link below. Your settings and price history are kept.</div>
       <div class="tmm-row"><button class="tmm-act" id="tmm-cpl">Copy script link</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
     $('#tmm-cpl', s).onclick = () => { try { navigator.clipboard.writeText(UPDATE_URL); $('#tmm-cpl', s).textContent = 'Copied'; } catch (e) { /* ignore */ } };
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // =====================================================================
+  //  DATABASE (IndexedDB, on your phone)
+  // =====================================================================
+  const DB = (() => {
+    let dbp = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise((res, rej) => {
+        const r = indexedDB.open('torn_market_mgr', 1);
+        r.onupgradeneeded = () => {
+          const d = r.result;
+          d.createObjectStore('hourly', { keyPath: 'sid' });          // per stock: {sid, acr, t:[], c:[]}
+          d.createObjectStore('minute', { keyPath: 't' });           // raw: {t, p:{sid:price}}
+          d.createObjectStore('meta', { keyPath: 'k' });
+          d.createObjectStore('decisions', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('executions', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('snapshots', { keyPath: 't' });
+        };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      return dbp;
+    }
+    const p = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    async function tx(name, mode, fn) {
+      const d = await open();
+      const t = d.transaction(name, mode);
+      const out = fn(t.objectStore(name));
+      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+      return out instanceof Promise ? out : out;
+    }
+    return {
+      get: (n, k) => tx(n, 'readonly', (s) => p(s.get(k))),
+      put: (n, v) => tx(n, 'readwrite', (s) => p(s.put(v))),
+      add: (n, v) => tx(n, 'readwrite', (s) => p(s.add(v))),
+      all: (n, range) => tx(n, 'readonly', (s) => p(s.getAll(range))),
+      count: (n) => tx(n, 'readonly', (s) => p(s.count())),
+      delBelow: (n, k) => tx(n, 'readwrite', (s) => p(s.delete(IDBKeyRange.upperBound(k, true)))),
+      clear: (n) => tx(n, 'readwrite', (s) => p(s.clear())),
+      async meta(k, d = null) { const r = await this.get('meta', k); return r ? r.v : d; },
+      setMeta(k, v) { return this.put('meta', { k, v }); },
+    };
+  })();
+
+  function mergeSeries(rec, points) {
+    const m = new Map();
+    for (let i = 0; i < rec.t.length; i++) m.set(rec.t[i], rec.c[i]);
+    for (const [t, c] of points) if (c > 0) m.set(t, c);
+    const ts = Array.from(m.keys()).sort((a, b) => a - b);
+    rec.t = ts; rec.c = ts.map((t) => m.get(t));
+    return rec;
+  }
+
+  // =====================================================================
+  //  TORN DATA
+  // =====================================================================
+  let marketMem = null;
+  async function getMarket(maxAgeSec = 60) {
+    const cached = marketMem || store.get('market', null);
+    if (cached && Date.now() - cached.t < maxAgeSec * 1000) return (marketMem = cached);
+    const j = await api('torn/?selections=stocks');
+    const stocks = {};
+    for (const [id, s] of Object.entries(j.stocks || {})) {
+      stocks[id] = { id: String(s.stock_id || id), acr: s.acronym, name: s.name, price: Number(s.current_price), cap: Number(s.market_cap) || 0, benefit: s.benefit || null };
+    }
+    marketMem = { t: Date.now(), stocks };
+    store.set('market', marketMem);
+    return marketMem;
+  }
+
+  let userMem = null;
+  async function getUser(maxAgeSec = 20) {
+    if (userMem && Date.now() - userMem.t < maxAgeSec * 1000) return userMem;
+    const j = await api('user/?selections=stocks,money,profile');
+    const owned = {};

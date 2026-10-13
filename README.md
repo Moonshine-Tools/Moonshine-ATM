@@ -61,14 +61,25 @@ The script looks for chances to **sell a little of one stock and buy another** f
 
 You confirm the sale, then confirm the purchase. Nothing happens without your two taps.
 
+### 🏛️ Bank advisor
+Torn's City Bank pays more than stocks for money you can lock away. Tap **Bank** in the moon menu to see:
+
+- **Your investment** and when its term ends.
+- **How much can move.** Everything in stocks except shares held for benefit blocks and the amount you choose to keep in stocks (Settings, default $10M).
+- **What to sell.** Stocks that are in profit after the 0.1% fee, with how many shares, what you get and the profit you lock in. Stocks below what you paid are listed separately as an option, with how many days of interest it takes to make the loss back.
+- **What the bank pays.** Interest on the money you move and on your whole investment, for the term you plan for (2 months by default). Your rate is worked out from Torn's current rate and your Bank Interest merits, or you can type in the rate from your bank page.
+
+Tap **Start selling** and it walks you through each sale like a withdrawal, then offers a button to open the bank. While a term is running the plan is shown but selling waits until it ends, since Torn allows one investment at a time.
+
 ### 📊 Growth tracking
 A chart shows how your stocks have grown compared with the whole market, over 1 day, 7 days, 30 days or all time. It ignores cash you add or take out, so a withdrawal never looks like a loss. If your line stays above the market's over weeks, your trades are working.
 
 ### 🌙 Out of the way
-Everything sits behind one small moon icon. Drag it to any edge of the screen. Tap it to open **Market**, **Withdraw** and **Deposit**.
+Everything sits behind one small moon icon. Drag it to any edge of the screen. Tap it to open **Market**, **Withdraw**, **Deposit** and **Bank**.
 
 - 🟠 An orange dot means you're carrying cash.
 - 🟢 A green dot means there's a trade idea.
+- 🟣 A purple dot means your bank term has ended (or nothing is invested and there's money worth moving).
 
 The panels follow Torn's light or dark mode, and they collapse into a thin bar at the top so they never cover Torn's buttons.
 
@@ -159,7 +170,7 @@ Moonshine is your **wallet**, not your savings account.
 | Getting money out | Locked until the term ends | Any time, in two taps |
 | Mugging risk | None | None |
 
-**Use the bank** for money you won't need for a week or more. **Use stocks with Moonshine** for everything else: cash from fights, missions and sales, money between bank terms, and anything you might spend soon. That money would otherwise sit in your pocket earning nothing and waiting to be mugged.
+**Use the bank** for money you won't need for a week or more. The **Bank** button in the moon menu works out what to sell and what the bank will pay. **Use stocks with Moonshine** for everything else: cash from fights, missions and sales, money between bank terms, and anything you might spend soon. That money would otherwise sit in your pocket earning nothing and waiting to be mugged.
 
 **Test results:** on 229 days of price history it had never seen, following the trade ideas returned about +12% (+11% more than just holding). That's roughly 3% every two months. It's a nice extra on spare cash, but it doesn't replace a bank investment.
 
@@ -196,6 +207,10 @@ Small edges add up over weeks, not days. Check **Market → Details** for the sc
 | Evidence required | 1.2× | How much bigger the gain must be than its uncertainty |
 | Most in one stock | 20% | Cap on any single stock's share of your portfolio, so money is spread over at least five stocks to rotate between |
 | Smallest trade | $250k | Trades smaller than this aren't suggested |
+| Keep in stocks | $10M | Bank advisor: money it leaves in stocks, on top of shares held for benefit blocks |
+| Bank term | 2m | Bank advisor: the term to plan for (1w, 2w, 1m, 2m or 3m) |
+| Bank rate | automatic | Bank advisor: your APR for that term. Blank works it out from Torn's rate and your merits |
+| Purple bank dot | on | Show the purple dot when your bank term ends |
 | Days of history | 730 | How far back to download prices |
 
 **Not sure what to set?** Market → Details → **Best trade settings** replays recent history the model never trained on with different *minimum gain* and *evidence* settings, compares each with buy-and-hold, and suggests one. Tap **Use these settings** to apply it. Re-test every week or two.
@@ -239,7 +254,7 @@ Everyone running the script will see the update within 6 hours. If the version n
 - [ ] Dividend ready-to-claim reminders
 - [ ] Benefit block planner
 - [ ] Put a value on stock benefits in trade decisions
-- [ ] Bank vs stocks comparison
+- [x] Bank vs stocks comparison (Bank advisor)
 - [ ] Travel guard reminder to deposit on landing
 - [ ] Withdraw amount presets
 - [ ] Weekly summary

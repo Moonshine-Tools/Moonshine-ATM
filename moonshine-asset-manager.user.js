@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.0.1
+// @version      3.1.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.0.1';
+  const SCRIPT_VERSION = '3.1.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -647,6 +647,10 @@
     maxWeightPct: 20,
     minTrade: 250000,
     showUnvalidated: false,
+    bankKeep: 10000000,
+    bankTerm: '2m',
+    bankApr: '',
+    bankDot: true,
   };
 
   const store = {
@@ -873,7 +877,64 @@
       factionId: Number(j.faction && j.faction.faction_id) || 0,
       state: String((j.status && j.status.state) || 'Okay'),
     };
+    // City Bank investment: how much is in it and when the term ends.
+    if (j.city_bank && typeof j.city_bank === 'object') {
+      const left = Number(j.city_bank.time_left) || 0;
+      userMem.bank = { amount: Number(j.city_bank.amount) || 0, endsAt: left > 0 ? Date.now() + left * 1000 : 0 };
+      store.set('bank', userMem.bank);
+    }
     return userMem;
+  }
+
+  // ---- City Bank ------------------------------------------------------
+  const BANK_URL = 'https://www.torn.com/bank.php';
+  const TERM_DAYS = { '1w': 7, '2w': 14, '1m': 30, '2m': 60, '3m': 90 };
+  const TERM_NAME = { '1w': '1-week', '2w': '2-week', '1m': '1-month', '2m': '2-month', '3m': '3-month' };
+
+  // Torn's base rates (all players) and your Bank Interest merits (+5% of the interest each).
+  async function getBankRates(force = false) {
+    const c = store.get('bankRates', null);
+    if (!force && c && c.rates && Date.now() - c.t < 6 * 3600000) return c;
+    let rates = null, merits = c ? c.merits || 0 : 0;
+    try {
+      const j = await api('torn/?selections=bank');
+      const b = j.bank || {};
+      rates = {};
+      for (const k of Object.keys(TERM_DAYS)) { const v = parseFloat(b[k]); if (Number.isFinite(v) && v > 0) rates[k] = v < 2 ? v * 100 : v; }
+      if (!Object.keys(rates).length) rates = null;
+    } catch (e) { /* rate unknown; the advisor asks for it */ }
+    try {
+      const j = await api('user/?selections=merits');
+      const m = j.merits || {};
+      merits = Number(m['Bank Interest'] ?? m.bank_interest ?? m.bankInterest) || 0;
+    } catch (e) { /* keep the last known value */ }
+    const out = { t: Date.now(), rates: rates || (c && c.rates) || null, merits };
+    if (out.rates) store.set('bankRates', out);
+    return out;
+  }
+
+  function termRate(br) {
+    const term = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+    const days = TERM_DAYS[term];
+    const own = parseFloat(settings.bankApr);
+    if (own > 0) return { term, days, apr: own, src: 'from your Settings' };
+    const base = br && br.rates && br.rates[term];
+    if (!base) return { term, days, apr: null };
+    const m = (br && br.merits) || 0;
+    return { term, days, apr: base * (1 + 0.05 * m), src: m ? `Torn's ${base.toFixed(2)}% plus your ${m} Bank Interest merit${m > 1 ? 's' : ''}` : "Torn's current rate" };
+  }
+  const interest = (amt, r) => (r.apr ? amt * (r.apr / 100) * (r.days / 365) : 0);
+
+  function bankState() {
+    const b = (userMem && userMem.bank) || store.get('bank', null);
+    if (!b) return null;
+    if (!(b.amount > 0)) return { state: 'none', amount: 0 };
+    if (b.endsAt > Date.now()) return { state: 'active', amount: b.amount, endsAt: b.endsAt };
+    return { state: 'ended', amount: b.amount };
+  }
+  function timeLeft(ms) {
+    const m = Math.max(0, Math.round(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m % 60}m`;
   }
 
   // =====================================================================
@@ -1516,12 +1577,13 @@
   #tmm-root .tmm-dot{position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid #121a30;display:none}
   #tmm-root .tmm-dot.opp{top:-2px;right:-2px;background:#3fd17a}
   #tmm-root .tmm-dot.cash{bottom:-2px;left:-2px;background:#ff9a2e}
-  #tmm-root .tmm-moon.has-opp .tmm-dot.opp,#tmm-root .tmm-moon.has-cash .tmm-dot.cash{display:block}
+  #tmm-root .tmm-dot.bank{top:-2px;left:-2px;background:#b98cff}
+  #tmm-root .tmm-moon.has-opp .tmm-dot.opp,#tmm-root .tmm-moon.has-cash .tmm-dot.cash,#tmm-root .tmm-moon.has-bank .tmm-dot.bank{display:block}
   #tmm-root .tmm-menu{position:fixed;z-index:99998;display:flex;flex-direction:column;gap:6px}
   #tmm-root .tmm-menu[hidden]{display:none}
   #tmm-root .tmm-mi-note{font-weight:400;font-size:12px;opacity:.9;margin-left:6px}
   #tmm-root .tmm-mi{border:0;border-radius:20px;padding:10px 15px;font-weight:600;font-size:14px;line-height:1;color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;text-align:left}
-  #tmm-root .tmm-mi.m{background:#2c3e66} #tmm-root .tmm-mi.w{background:#2a8450} #tmm-root .tmm-mi.d{background:#2f6d9c}
+  #tmm-root .tmm-mi.m{background:#2c3e66} #tmm-root .tmm-mi.w{background:#2a8450} #tmm-root .tmm-mi.d{background:#2f6d9c} #tmm-root .tmm-mi.b{background:#5b3f8c}
   #tmm-root .tmm-mi:focus-visible,#tmm-root .tmm-moon:focus-visible,#tmm-root button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
   #tmm-root .tmm-sheet{position:fixed;z-index:99999;left:0;right:0;bottom:0;background:var(--bg);color:var(--ink);border-top:3px solid var(--brass);border-radius:14px 14px 0 0;
     padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 16px);max-height:82vh;overflow:auto;box-shadow:0 -6px 24px var(--shadow)}
@@ -1603,11 +1665,12 @@
     root = document.createElement('div');
     root.id = 'tmm-root';
     root.innerHTML = `
-      <button class="tmm-moon" aria-label="Moonshine Asset Manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i></button>
+      <button class="tmm-moon" aria-label="Moonshine Asset Manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i><i class="tmm-dot bank"></i></button>
       <div class="tmm-menu" hidden>
         <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
         <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
         <button class="tmm-mi d" data-a="deposit">Deposit<span class="tmm-mi-note" data-note="cash"></span></button>
+        <button class="tmm-mi b" data-a="bank">Bank<span class="tmm-mi-note" data-note="bank"></span></button>
       </div>`;
     document.body.appendChild(root);
     moon = $('.tmm-moon', root);
@@ -1621,7 +1684,7 @@
       const b = e.target.closest('[data-a]');
       if (!b) return;
       hideMenu();
-      ({ market: () => showMarket('overview'), withdraw: askWithdraw, deposit: () => runJob({ action: 'deposit' }) })[b.dataset.a]();
+      ({ market: () => showMarket('overview'), withdraw: askWithdraw, deposit: () => runJob({ action: 'deposit' }), bank: showAdvisor })[b.dataset.a]();
     });
     document.addEventListener('pointerdown', (e) => {
       if (!menu.hidden && !menu.contains(e.target) && !moon.contains(e.target)) hideMenu();
@@ -2084,6 +2147,11 @@
       ${f('s-maxw', 'Most of your portfolio in one stock (%)', settings.maxWeightPct)}
       ${f('s-mint', 'Smallest trade worth suggesting', short(settings.minTrade))}
       ${c('s-unval', 'Show recommendations even if the model fails its test (not advised)', settings.showUnvalidated)}
+      <h4>Bank advisor</h4>
+      ${f('s-bkeep', 'Keep this much in stocks (shares held for benefit blocks are kept on top of this)', short(settings.bankKeep))}
+      ${f('s-bterm', 'Bank term to plan for: 1w, 2w, 1m, 2m or 3m', settings.bankTerm)}
+      ${f('s-bapr', 'Your bank rate for that term (APR %). Leave blank to work it out from Torn and your merits', settings.bankApr, 'e.g. 54.76')}
+      ${c('s-bdot', 'Purple dot on the moon when your bank term has ended', settings.bankDot)}
       <h4>Data and display</h4>
       ${f('s-days', 'Days of history to download', settings.historyDays)}
       ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
@@ -2125,6 +2193,10 @@
       settings.showUnvalidated = $('#s-unval', body).checked;
       settings.historyDays = Math.round(n('s-days', DEFAULTS.historyDays, 30, 3650));
       settings.autoOpen = $('#s-open', body).checked;
+      const bk = parseAmount(g('s-bkeep')); settings.bankKeep = bk >= 0 ? bk : DEFAULTS.bankKeep;
+      const bt = g('s-bterm').toLowerCase(); settings.bankTerm = TERM_DAYS[bt] ? bt : DEFAULTS.bankTerm;
+      const ba = parseFloat(g('s-bapr').replace('%', '')); settings.bankApr = ba > 0 ? String(ba) : '';
+      settings.bankDot = $('#s-bdot', body).checked;
       saveSettings();
       if (A) A.dirty = true;
       showMarket('overview');
@@ -2157,6 +2229,16 @@
         has = !!rot && !(skip && skip.k === rot.sell + '>' + rot.buy && Date.now() < skip.until);
       }
       if (moon) moon.classList.toggle('has-opp', has);
+      // Purple dot: your bank term has ended (or nothing is invested and there's money to move).
+      const bs = bankState();
+      let bankDot = false;
+      if (settings.bankDot && bs && an.market) {
+        if (bs.state === 'ended') bankDot = true;
+        else if (bs.state === 'none') { const bp = planBank(an, userMem); bankDot = bp.movable >= 1e6 && bp.legs.length > 0; }
+      }
+      if (moon) moon.classList.toggle('has-bank', bankDot);
+      const bnote = $('[data-note="bank"]', root);
+      if (bnote) bnote.textContent = !bs ? '' : bs.state === 'ended' ? '(term ended)' : bs.state === 'active' ? `(${timeLeft(bs.endsAt - Date.now())} left)` : bankDot ? '(nothing invested)' : '';
       const note = $('[data-note="opp"]', root);
       if (note) note.textContent = has ? '(trade idea)' : updateInfo() ? '(update)' : '';
       updateCashBadge();
@@ -2186,6 +2268,132 @@
     $('#tmm-x', s).onclick = closeSheet;
   }
 
+  // ------------------------------------------------------------ bank advisor
+  // Which shares to sell to move money into a City Bank investment.
+  // Keeps shares held for benefit blocks plus your "keep in stocks" amount,
+  // sells stocks that are in profit first (weakest outlook first), and lists
+  // stocks below what you paid separately, as an option.
+  function planBank(an, user) {
+    const L = liveStocks(an, user);
+    const useModel = modelUsable(an);
+    let stockValue = 0, blockValue = 0;
+    const win = [], lose = [];
+    for (const x of Object.values(L)) {
+      if (!x.owned) continue;
+      stockValue += x.owned * x.price;
+      blockValue += (x.owned - Math.max(0, x.spare)) * x.price;
+      if (!x.allowed || x.spare < 1) continue;
+      (x.profit != null && x.profit < 0 ? lose : win).push(x);
+    }
+    const free = stockValue - blockValue;
+    const movable = Math.max(0, free - settings.bankKeep);
+    const outlook = (x) => (useModel && x.pred ? x.pred.mean : 0);
+    // In profit: weakest expected return first, then the biggest profit. No purchase record: after those.
+    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.profit || 0) - (a.profit || 0)));
+    // Below what you paid: smallest loss first.
+    lose.sort((a, b) => (b.profit - a.profit) || (outlook(a) - outlook(b)));
+    const pick = (list, amount) => {
+      const legs = []; let left = amount;
+      for (const x of list) {
+        const net = x.price * (1 - FEE);
+        if (left < net) continue;
+        const shares = Math.min(x.spare, Math.floor(left / net));
+        const get = shares * net;
+        if (shares < 1 || get < 10000) continue;
+        legs.push({ x, sid: x.s.id, shares, get, gain: x.cost ? shares * (net - x.cost) : null });
+        left -= get;
+      }
+      return legs;
+    };
+    const legs = pick(win, movable);
+    const proceeds = legs.reduce((a, l) => a + l.get, 0);
+    const lossLegs = pick(lose, movable - proceeds);
+    return {
+      stockValue, blockValue, free, movable, legs, proceeds,
+      gain: legs.reduce((a, l) => a + (l.gain || 0), 0),
+      lossLegs, lossProceeds: lossLegs.reduce((a, l) => a + l.get, 0),
+      loss: -lossLegs.reduce((a, l) => a + (l.gain || 0), 0),
+    };
+  }
+
+  async function showAdvisor() {
+    const s = openSheet(`<h3>Bank advisor</h3><div id="tmm-bank"><div class="tmm-sub">Checking your bank and stocks…</div></div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    const box = $('#tmm-bank', s);
+    try {
+      if (!apiKey()) { box.innerHTML = `<div class="tmm-err">Add your Torn API key in Market → Settings first.</div>`; return; }
+      userMem = null;
+      const [an, user, br] = await Promise.all([analyze().catch(() => null), getUser(0), getBankRates()]);
+      const market = (an && an.market) || (await getMarket(60));
+      const base = an && an.market ? an : { market, preds: {}, model: null, S: {}, h: 24 };
+      if (!sheet || !document.body.contains(box)) return;
+      const bs = bankState();
+      const r = termRate(br);
+      const P = planBank(base, user);
+      const tName = TERM_NAME[r.term];
+
+      const bankLine = !bs ? `<div class="tmm-warn">Couldn't read your bank investment from Torn.</div>`
+        : bs.state === 'active' ? `<div class="tmm-big">${money(bs.amount)} invested</div><div class="tmm-sub">Your term ends in <b>${timeLeft(bs.endsAt - Date.now())}</b>. Torn allows one investment at a time, so the plan below is for when it ends.</div>`
+        : bs.state === 'ended' ? `<div class="tmm-big tmm-pos">Your term has ended</div><div class="tmm-sub">${money(bs.amount)} is ready. Collect it, add the money from the sales below, and start one new term with everything.</div>`
+        : `<div class="tmm-big">Nothing invested</div><div class="tmm-sub">You have no bank investment running.</div>`;
+      const rateLine = r.apr
+        ? `<div class="tmm-sub">Planning for a <b>${tName}</b> term at <b>${r.apr.toFixed(2)}% APR</b> (${esc(r.src)}). If your bank page shows a different rate, enter it in Market → Settings.</div>`
+        : `<div class="tmm-warn">Couldn't get the bank rate from Torn. Enter your ${tName} rate in Market → Settings to see the interest.</div>`;
+
+      const kv = (k, v, cls = '') => `<tr><td>${k}</td><td class="${cls}">${v}</td></tr>`;
+      const holdings = `<table class="tmm-tbl">
+        ${kv('In stocks', money(P.stockValue))}
+        ${kv('Held for benefit blocks (kept)', '−' + money(P.blockValue))}
+        ${kv('Keep in stocks (your setting)', '−' + money(Math.min(settings.bankKeep, P.free)))}
+        ${kv('<b>Can move to the bank</b>', '<b>' + money(P.movable) + '</b>')}
+      </table>`;
+
+      const rows = (legs) => `<table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>You get</th><th>Profit</th></tr>
+        ${legs.map((l) => `<tr><td>${esc(l.x.s.acr)}</td><td>${num(l.shares)}</td><td>${money(l.get)}</td><td class="${l.gain == null ? '' : l.gain >= 0 ? 'tmm-pos' : 'tmm-neg'}">${l.gain == null ? '—' : (l.gain >= 0 ? '+' : '') + money(l.gain) + ` (${pctPlain(l.x.profit, 1)})`}</td></tr>`).join('')}</table>`;
+
+      let plan;
+      if (P.movable < 1e5) {
+        plan = `<div class="tmm-card"><div class="tmm-sub">Nothing to move: your spare stocks are within the ${money(settings.bankKeep)} you keep in stocks. Lower that amount in Market → Settings to move more.</div></div>`;
+      } else if (!P.legs.length && !P.lossLegs.length) {
+        plan = `<div class="tmm-card"><div class="tmm-sub">No spare shares to sell. Everything left is held for benefit blocks or excluded in Settings.</div></div>`;
+      } else {
+        const bankNow = bs && bs.state !== 'none' ? bs.amount : 0;
+        const withLoss = P.proceeds + P.lossProceeds;
+        const recoverDays = r.apr && P.lossProceeds > 0 ? P.loss / (P.lossProceeds * r.apr / 100 / 365) : null;
+        const summary = (amt) => r.apr ? `
+          <table class="tmm-tbl">
+            ${kv('Moved to the bank', money(amt))}
+            ${kv(`Interest on that, ${tName} term`, '+' + money(interest(amt, r)), 'tmm-pos')}
+            ${bankNow ? kv(`Whole investment (${money(bankNow + amt)})`, '+' + money(interest(bankNow + amt, r)), 'tmm-pos') : ''}
+          </table>
+          <div class="tmm-sub">Left in stocks, the same money would need to grow ${(interest(1, r) * 100).toFixed(1)}% in ${r.days} days to match, and stocks aren't guaranteed.</div>` : '';
+        plan = `
+          <div class="tmm-card">
+            ${P.legs.length ? `<h4>Sell these (in profit after the 0.1% fee)</h4>${rows(P.legs)}
+            <div class="tmm-sub">You get <b>${money(P.proceeds)}</b>, locking in <b class="tmm-pos">+${money(P.gain)}</b> profit.</div>` : `<div class="tmm-sub">None of your spare stocks are above what you paid right now.</div>`}
+            <div id="tmm-bank-sum">${summary(P.proceeds)}</div>
+            ${P.lossLegs.length ? `<h4>Below what you paid (optional)</h4>${rows(P.lossLegs)}
+              <label class="tmm-check"><input type="checkbox" id="tmm-bank-loss"> Sell these too: ${money(P.lossProceeds)}, a loss of ${money(P.loss)}${recoverDays != null ? `, which the bank interest makes back in about ${Math.max(1, Math.ceil(recoverDays))} day${Math.ceil(recoverDays) > 1 ? 's' : ''}` : ''}.</label>` : ''}
+            <div class="tmm-row"><button class="tmm-act" id="tmm-bank-go" ${bs && bs.state === 'active' ? 'disabled' : ''}>${bs && bs.state === 'active' ? `Available when your term ends (${timeLeft(bs.endsAt - Date.now())})` : 'Start selling'}</button></div>
+            <div class="tmm-sub">The script fills in each sale; you tap Sell. After the last one, go straight to the bank so the cash is never left on hand.</div>
+          </div>`;
+        setTimeout(() => {
+          const cb = $('#tmm-bank-loss', box), sum = $('#tmm-bank-sum', box), go = $('#tmm-bank-go', box);
+          if (cb) cb.onchange = () => { sum.innerHTML = summary(cb.checked ? withLoss : P.proceeds); };
+          if (go) go.onclick = () => {
+            const legs = P.legs.concat(cb && cb.checked ? P.lossLegs : []);
+            if (!legs.length) return;
+            runJob({ action: 'bank', amount: Math.round(legs.reduce((a, l) => a + l.get, 0)), legs: legs.map((l) => ({ sid: l.sid, shares: l.shares })) });
+          };
+        }, 0);
+      }
+      box.innerHTML = `<div class="tmm-card">${bankLine}${rateLine}</div><div class="tmm-card">${holdings}</div>${plan}`;
+    } catch (e) {
+      box.innerHTML = `<div class="tmm-err">${esc(e.message || e)}</div>`;
+    }
+  }
+
   // ------------------------------------------------------------ trade jobs
   function runJob(job) {
     if (!onStockPage()) {
@@ -2203,7 +2411,7 @@
   }
 
   async function execute(job) {
-    openSheet(`<h3>${job.action === 'withdraw' ? 'Withdraw ' + money(job.amount) : job.action === 'deposit' ? 'Deposit' : 'Rotation'}</h3><div class="tmm-sub">Checking prices and your shares…</div>`);
+    openSheet(`<h3>${job.action === 'withdraw' ? 'Withdraw ' + money(job.amount) : job.action === 'deposit' ? 'Deposit' : job.action === 'bank' ? 'Move to the bank' : 'Rotation'}</h3><div class="tmm-sub">Checking prices and your shares…</div>`);
     try {
       const rows = await waitFor(() => stockRows().length > 0, 8000);
       if (!rows) throw new Error("The stock list didn't load. You may be traveling, in hospital or in jail, or Torn changed the page layout.");
@@ -2229,6 +2437,17 @@
         return showQuick(job, plan, 0, 'buy');
       }
       if (job.action === 'rotate') return showRotation(job, base, user);
+      if (job.action === 'bank') {
+        const L = liveStocks(base, user);
+        const legs = [];
+        for (const g of job.legs || []) {
+          const x = L[g.sid];
+          if (!x || x.spare < 1) continue;
+          legs.push(Object.assign({}, x, { shares: Math.min(g.shares, x.spare), cap: x.spare }));
+        }
+        if (!legs.length) return showError('Those shares are no longer available to sell. Open Bank again for a fresh plan.');
+        return showQuick(job, { legs, alts: [], mode: modelUsable(base) ? 'model' : 'simple', anyProfit: true, bank: true }, 0, 'sell');
+      }
     } catch (e) { showError(e.message || String(e)); }
   }
 
@@ -2644,7 +2863,9 @@
     if (plan.mode === 'split') warn.push('No single stock covers this without breaking a benefit, so it is split into separate sales.');
     if (!isSell && o.completes) warn.push(`This completes your next ${o.s.acr} benefit block.`);
     if (!isSell && o.overweight) warn.push(`This puts more than ${settings.maxWeightPct}% of your portfolio in ${o.s.acr}.`);
-    if (isSell && o.profit != null && o.profit < 0) {
+    if (isSell && o.profit != null && o.profit < 0 && plan.bank) {
+      warn.push(`${o.s.acr} is below what you paid: this sale locks in a loss of about ${money(o.shares * (o.cost - o.price * (1 - FEE)))}. The bank interest makes it back.`);
+    } else if (isSell && o.profit != null && o.profit < 0) {
       const loss = o.shares * (o.cost - o.price * (1 - FEE));
       warn.push(plan.anyProfit
         ? `${o.s.acr} is below what you paid: this sale loses about ${money(loss)}. A stock in profit is listed below.`
@@ -2659,11 +2880,11 @@
     const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
     showLeg({
       kind: 'cash',
-      title: isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
+      title: plan.bank ? `Move to the bank${legTag}` : isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
       action, stock: o.s, shares: o.shares, price: o.price,
       lines: [
         isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
-        quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
+        plan.bank ? `Part of your bank move: ${money(job.amount)} in total across ${plan.legs.length} sale${plan.legs.length > 1 ? 's' : ''}.` : quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
         ...(profitLine ? [profitLine] : []),
         ...(avgLine ? [avgLine] : []),
       ],
@@ -2687,6 +2908,7 @@
           status.after(b);
           return true;
         }
+        if (plan.bank) return { text: 'All sold. Go straight to the bank and start your new term, so the cash is never left on hand.', extras: [{ label: 'Open the bank', long: 'Open the bank', fn: () => { closeSheet(); location.href = BANK_URL; } }] };
         return false;
       },
     });
