@@ -138,6 +138,35 @@ This only works if the script was added with **+ → Remote** and the link above
 
 ---
 
+## Getting started
+
+How much you get out of Moonshine depends on how much you have in stocks. The script won't suggest trades smaller than $250k, and it keeps any one stock under 20% of your portfolio, so trade ideas need room to work.
+
+| Money in stocks | What to expect |
+|---|---|
+| **Under ~$1M** | A mug-proof bank. Withdraw and Deposit work at any size; trade ideas will be rare. |
+| **$1M – $5M** | Trade ideas sometimes. Set **Smallest trade** to $50k in Settings to see more of them. Small trades still beat the 0.1% fee; they just earn less. |
+| **$5M and up** | The full see-saw strategy has room to work. |
+
+### How many stocks
+- **Aim for 5–8 different stocks.** The script earns by moving money from stocks that are high to ones that are low, so it needs several to move between. Past about 8, each holding gets too small to trade.
+- **You don't need to pick them.** Deposit chooses the best-placed stock each time, so the spread builds itself.
+- **Keep some shares above your benefit blocks.** The script never sells shares that hold a benefit block. If everything you own sits exactly on a block, it has nothing to trade.
+
+### Brand-new players
+The Stock Ticker (50 points from the Points Building) pays off right away as a **mug-safe bank**, not as a profit engine:
+
+1. Install the script and let it download price history (5–10 minutes with Torn open).
+2. Tap **Deposit** every time you're carrying cash. Tap **Withdraw** when you need some back. It sells stocks worth more than you paid, so banking doesn't cost you.
+3. Don't expect profit yet. Expected moves are fractions of a percent, so on $100k the gains are pocket change. The win is not getting mugged.
+4. Keep money you'll need soon (gym, travel, items) out of stocks, since every sale costs the 0.1% fee.
+5. Once you pass about $1M, set **Smallest trade** to $50k and start following trade ideas.
+
+### Be patient
+Small edges add up over weeks, not days. Check **Market → Details** for the script's track record, and the growth chart to see whether you're beating the market. Some weeks the market wins.
+
+---
+
 ## Settings
 
 | Setting | Default | What it does |
