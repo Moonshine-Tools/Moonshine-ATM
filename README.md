@@ -215,8 +215,19 @@ Everyone running the script will see the update within 6 hours. If the version n
 
 ## Roadmap
 
+- [ ] "Report a problem" button for bug reports
+- [ ] Backup and restore your data
+- [ ] Publish on Greasy Fork
+- [ ] Dividend ready-to-claim reminders
+- [ ] Benefit block planner
 - [ ] Put a value on stock benefits in trade decisions
-- [ ] Quick deposit to your home (property) vault. On hold until I have a property with a vault to build and test it on.
+- [ ] Bank vs stocks comparison
+- [ ] Travel guard reminder to deposit on landing
+- [ ] Withdraw amount presets
+- [ ] Weekly summary
+- [ ] Per-stock track record
+- [ ] Multi-step rebalance plans
+- [ ] Quick deposit to your home (property) vault (on hold until I have a property with a vault)
 
 ---
 
