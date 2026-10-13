@@ -1,0 +1,735 @@
+          : `You've drawn up to <b>${money(W.used)}</b> at once.`} ${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need) ? '' : `With ${money(KEEP_MIN)} for trading, `}${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
+        <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
+    return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
+      <table class="tmm-tbl">
+        ${kv(`Deposits (${W.depN})`, money(W.dep))}
+        ${kv(`Withdrawals (${W.wdN})`, money(W.wd))}
+        ${kv('Withdrawn per week (average)', money(W.weekly))}
+        ${kv('Most drawn at once', money(W.used))}
+        ${W.typical ? kv('Typical withdrawal', money(W.typical)) : ''}
+        ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
+        ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
+      </table>
+      ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
+      ${advice}
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), and at least 5 × your typical withdrawal, rounded up to the next $1M.</div></div>`;
+  }
+
+  async function showAdvisor() {
+    const s = openSheet(`<h3>Bank advisor</h3><div id="tmm-bank"><div class="tmm-sub">Checking your bank and stocks…</div></div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    const box = $('#tmm-bank', s);
+    try {
+      if (!apiKey()) { box.innerHTML = `<div class="tmm-err">Add your Torn API key in Market → Settings first.</div>`; return; }
+      userMem = null;
+      const [an, user, br] = await Promise.all([analyze().catch(() => null), getUser(0), getBankRates()]);
+      const market = (an && an.market) || (await getMarket(60));
+      const base = an && an.market ? an : { market, preds: {}, model: null, S: {}, h: 24 };
+      if (!sheet || !document.body.contains(box)) return;
+      const bs = bankState();
+      const r = termRate(br);
+      const hoursLeft = bs && bs.state === 'active' ? (bs.endsAt - Date.now()) / 3600000 : 0;
+      const P = planBank(base, user, hoursLeft);
+      const tName = TERM_NAME[r.term];
+
+      const bankLine = !bs ? `<div class="tmm-warn">Couldn't read your bank investment from Torn.</div>`
+        : bs.state === 'active' ? `<div class="tmm-big">${money(bs.amount)} invested</div><div class="tmm-sub">Your term ends in <b>${timeLeft(bs.endsAt - Date.now())}</b>.${bs.endsAt - Date.now() <= 24 * 3600000 ? ' <b>Get ready:</b> check the plan below and your Keep in stocks amount.' : ''} Torn allows one investment at a time, so the plan below is for when it ends.</div>`
+        : bs.state === 'ended' ? `<div class="tmm-big tmm-pos">Your term has ended</div><div class="tmm-sub">${money(bs.amount)} is ready. Collect it, add the money from the sales below, and start one new term with everything.</div>`
+        : `<div class="tmm-big">Nothing invested</div><div class="tmm-sub">You have no bank investment running.</div>`;
+      const rateLine = r.apr
+        ? `<div class="tmm-sub">Planning for a <b>${tName}</b> term at <b>${r.apr.toFixed(2)}% APR</b> (${esc(r.src)}). If your bank page shows a different rate, enter it in Market → Settings.</div>`
+        : `<div class="tmm-warn">Couldn't get the bank rate from Torn. Enter your ${tName} rate in Market → Settings to see the interest.</div>`;
+
+      const kv = (k, v, cls = '') => `<tr><td>${k}</td><td class="${cls}">${v}</td></tr>`;
+      const holdings = `<table class="tmm-tbl">
+        ${kv('In stocks', money(P.stockValue))}
+        ${kv('Kept for benefit blocks', P.blockValue > 0 ? '~' + money(P.blockValue) : 'none')}
+        ${kv('Kept in stocks (your setting)', '~' + money(Math.min(settings.bankKeep, P.free)))}
+        ${kv('<b>Can move to the bank</b>', '<b>' + money(P.movable) + '</b>')}
+      </table>`;
+
+      const cls = (v) => (v == null ? '' : v >= 0 ? 'tmm-pos' : 'tmm-neg');
+      const rows = (legs) => `<table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>You get</th>${P.useModel ? '<th>Profit now</th><th>At end*</th>' : '<th>Profit</th>'}</tr>
+        ${legs.map((l) => `<tr><td>${esc(l.x.s.acr)}</td><td>${num(l.shares)}</td><td>${money(l.get)}</td><td class="${cls(l.gain)}">${l.gain == null ? '—' : P.useModel ? pctPlain(l.x.profit, 1) : (l.gain >= 0 ? '+' : '') + money(l.gain) + ` (${pctPlain(l.x.profit, 1)})`}</td>${P.useModel ? `<td class="${cls(l.x.expProfit)}">${l.x.expProfit == null ? '—' : pctPlain(l.x.expProfit, 1)}</td>` : ''}</tr>`).join('')}</table>`;
+
+      let plan, wirePlan = null;
+      if (P.movable < 1e5) {
+        plan = `<div class="tmm-card"><div class="tmm-sub">Nothing to move: your spare stocks are within the ${money(settings.bankKeep)} you keep in stocks. Lower that amount in Market → Settings to move more.</div></div>`;
+      } else if (!P.legs.length && !P.lossLegs.length) {
+        plan = `<div class="tmm-card"><div class="tmm-sub">No spare shares to sell. Everything left is held for benefit blocks or excluded in Settings.</div></div>`;
+      } else {
+        const bankNow = bs && bs.state !== 'none' ? bs.amount : 0;
+        const withLoss = P.proceeds + P.lossProceeds;
+        const recoverDays = r.apr && P.lossProceeds > 0 ? P.loss / (P.lossProceeds * r.apr / 100 / 365) : null;
+        const r1w = termRate(br, '1w'), r2m = termRate(br, '2m');
+        const weekly2m = (total) => total * (Math.pow(1 + interest(1, r1w), 60 / 7) - 1);
+        const summary = (amt) => r.apr ? `
+          <table class="tmm-tbl">
+            ${kv('Moved to the bank', money(amt))}
+            ${kv(`Interest on that, ${tName} term`, '+' + money(interest(amt, r)), 'tmm-pos')}
+          </table>
+          <h4>Whole investment: ${money(bankNow + amt)}</h4>
+          <table class="tmm-tbl">
+            ${r1w.apr ? kv(`1-week term (${r1w.apr.toFixed(2)}%), per week`, '+' + money(interest(bankNow + amt, r1w)), 'tmm-pos') : ''}
+            ${r1w.apr ? kv('1-week terms renewed for 2 months', '+' + money(weekly2m(bankNow + amt)), 'tmm-pos') : ''}
+            ${r2m.apr ? kv(`2-month term (${r2m.apr.toFixed(2)}%)`, '+' + money(interest(bankNow + amt, r2m)), 'tmm-pos') : ''}
+            ${r.term !== '1w' && r.term !== '2m' && r.apr ? kv(`${tName} term (${r.apr.toFixed(2)}%)`, '+' + money(interest(bankNow + amt, r)), 'tmm-pos') : ''}
+          </table>
+          <div class="tmm-sub">Left in stocks, the same money would need to grow ${(interest(1, r) * 100).toFixed(1)}% in ${r.days} days to match, and stocks aren't guaranteed.</div>` : '';
+        plan = `
+          <div class="tmm-card">
+            ${bs && bs.state === 'active' ? `<div class="tmm-warn">Prices move, so these numbers will change by the time your term ends. Open Bank again then for an up-to-date plan.</div>` : ''}
+            ${P.legs.length ? `<h4>Sell these (${P.useModel ? 'expected in profit when your term ends' : 'in profit after the 0.1% fee'})</h4>${rows(P.legs)}
+            <div class="tmm-sub">You get <b>${money(P.proceeds)}</b>, locking in <b class="tmm-pos">+${money(P.gain)}</b> profit.</div>` : `<div class="tmm-sub">None of your spare stocks are above what you paid right now.</div>`}
+            <div id="tmm-bank-sum">${summary(P.proceeds)}</div>
+            ${P.useModel ? `<div class="tmm-sub">* Profit after the fee if prices follow the model's outlook until your term ends. A guide, not a promise.</div>` : ''}
+            <div class="tmm-sub">Sales under ${money(MIN_BANK_LEG)} are skipped; that money stays in stocks with what you keep.</div>
+            ${P.lossLegs.length ? `<h4>Not suggested: ${P.useModel ? 'expected below what you paid when your term ends' : 'below what you paid'}</h4>${rows(P.lossLegs)}
+              <label class="tmm-check"><input type="checkbox" id="tmm-bank-loss"> Sell these too: ${money(P.lossProceeds)}, a loss of ${money(P.loss)}${recoverDays != null ? `, which the bank interest makes back in about ${Math.max(1, Math.ceil(recoverDays))} day${Math.ceil(recoverDays) > 1 ? 's' : ''}` : ''}.</label>` : ''}
+            <div class="tmm-row"><button class="tmm-act" id="tmm-bank-go" ${bs && bs.state === 'active' ? 'disabled' : ''}>${bs && bs.state === 'active' ? `Available when your term ends (${timeLeft(bs.endsAt - Date.now())})` : 'Start selling'}</button></div>
+            <div class="tmm-sub">The script fills in each sale; you tap Sell. After the last one, go straight to the bank so the cash is never left on hand.</div>
+          </div>`;
+        wirePlan = () => {
+          const cb = $('#tmm-bank-loss', box), sum = $('#tmm-bank-sum', box), go = $('#tmm-bank-go', box);
+          if (cb) cb.onchange = () => { sum.innerHTML = summary(cb.checked ? withLoss : P.proceeds); };
+          if (go) go.onclick = () => {
+            const legs = P.legs.concat(cb && cb.checked ? P.lossLegs : []);
+            if (!legs.length) return;
+            runJob({ action: 'bank', amount: Math.round(legs.reduce((a, l) => a + l.get, 0)), legs: legs.map((l) => ({ sid: l.sid, shares: l.shares })) });
+          };
+        };
+      }
+      let W = null;
+      try { W = await walletStats(base.S && Object.keys(base.S).length ? base : null, r); } catch (e) { /* stats are optional */ }
+      if (!sheet || !document.body.contains(box)) return;
+      box.innerHTML = `<div class="tmm-card">${bankLine}${rateLine}</div><div class="tmm-card">${holdings}</div>${W ? walletCard(W) : ''}${plan}`;
+      if (wirePlan) wirePlan();
+      const ku = $('#tmm-keep-use', box);
+      if (ku) ku.onclick = () => { settings.bankKeep = W.rec; saveSettings(); showAdvisor(); };
+    } catch (e) {
+      box.innerHTML = `<div class="tmm-err">${esc(e.message || e)}</div>`;
+    }
+  }
+
+  // ------------------------------------------------------------ trade jobs
+  function runJob(job) {
+    if (!onStockPage()) {
+      sessionStorage.setItem(LS + 'pending', JSON.stringify(Object.assign({ t: Date.now() }, job)));
+      openSheet(`<h3>Opening the stock market…</h3>`);
+      location.href = STOCK_URL;
+      return;
+    }
+    execute(job);
+  }
+
+  function showError(msg) {
+    const s = openSheet(`<h3>Can't do that right now</h3><div class="tmm-err">${esc(msg)}</div><div class="tmm-row"><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  async function execute(job) {
+    openSheet(`<h3>${job.action === 'withdraw' ? 'Withdraw ' + money(job.amount) : job.action === 'deposit' ? 'Deposit' : job.action === 'bank' ? 'Move to the bank' : 'Rotation'}</h3><div class="tmm-sub">Checking prices and your shares…</div>`);
+    try {
+      const rows = await waitFor(() => stockRows().length > 0, 8000);
+      if (!rows) throw new Error("The stock list didn't load. You may be traveling, in hospital or in jail, or Torn changed the page layout.");
+      userMem = null;
+      const [an, user] = await Promise.all([analyze().catch(() => null), getUser(0)]);
+      const market = (an && an.market) || (await getMarket(60));
+      const base = an || { market, preds: {}, model: null, S: {}, h: 24 };
+      if (Date.now() - market.t > 5 * 60000) throw new Error('Price data is stale. Try again in a moment.');
+      if (job.action === 'withdraw') {
+        const plan = planWithdraw(job.amount, base, user);
+        if (plan.error) return showError(plan.error);
+        return showQuick(job, plan, 0, 'sell');
+      }
+      if (job.action === 'deposit') {
+        const cash = domCash() ?? user.cash;
+        const plan = planDeposit(cash, base, user);
+        if (plan.error) {
+          const left = cash - settings.keepOnHand;
+          if (plan.tooSmall && left > 0) return showSmallCashOffer(left, plan.error);
+          return showError(plan.error);
+        }
+        if (plan.noGood) return showNoGoodBuys(job, plan);
+        const spread = planSpread(cash, base, user, await typicalWithdrawal());
+        if (spread && plan.avail > (settings.maxWeightPct / 100) * spread.total) return showSpread(job, spread, plan);
+        return showQuick(job, plan, 0, 'buy');
+      }
+      if (job.action === 'rotate') return showRotation(job, base, user);
+      if (job.action === 'bank') {
+        const L = liveStocks(base, user);
+        const legs = [];
+        for (const g of job.legs || []) {
+          const x = L[g.sid];
+          if (!x || x.spare < 1) continue;
+          legs.push(Object.assign({}, x, { shares: Math.min(g.shares, x.spare), cap: x.spare }));
+        }
+        if (!legs.length) return showError('Those shares are no longer available to sell. Open Bank again for a fresh plan.');
+        return showQuick(job, { legs, alts: [], mode: modelUsable(base) ? 'model' : 'simple', anyProfit: true, bank: true }, 0, 'sell');
+      }
+    } catch (e) { showError(e.message || String(e)); }
+  }
+
+  // ------------------------------------------------------------ church donation
+  const CHURCH_URL = 'https://www.torn.com/church.php';
+  const onChurchPage = () => /church\.php/i.test(location.href);
+
+  function cheapestAllowedPrice() {
+    const m = marketMem || store.get('market', null);
+    if (!m) return null;
+    const ex = excluded();
+    const park = settings.parkStock.toUpperCase();
+    const owned = userMem ? userMem.owned : {};
+    let best = null;
+    for (const s of Object.values(m.stocks)) {
+      if (ex.includes(s.acr)) continue;
+      if (settings.depositOwnedOnly && !owned[s.id] && s.acr !== park) continue;
+      const p = domPrice(s.id) || s.price;
+      if (p > 0 && (best == null || p < best)) best = p;
+    }
+    return best;
+  }
+
+  // ------------------------------------------------------------ cash leftovers
+  const vaultAvailable = () => settings.factionVault && !!userMem && userMem.factionId > 0 &&
+    !/hospital|jail|travel|abroad|federal/i.test(userMem.state || '');
+  // The church gives money away for good, so it's a last resort: only for small
+  // amounts that can't buy even one share of any stock. A cheap share keeps the
+  // money and only costs the 0.1% fee when you sell it.
+  const canBuyAShare = (amt) => { const c = cheapestAllowedPrice(); return c != null && amt >= c * (1 + settings.bufferPct / 100); };
+  const churchOk = (amt) => amt >= 1 && amt <= settings.churchMax && !canBuyAShare(amt);
+  function placeOptions(amt) {
+    const out = [];
+    if (vaultAvailable()) out.push({ label: 'Faction vault', long: `Deposit ${money(amt)} to the faction vault`, fn: () => startVaultDeposit(amt) });
+    if (churchOk(amt)) out.push({ label: 'Church', long: `Donate ${money(amt)} to the church`, fn: () => startDonation(amt) });
+    return out;
+  }
+
+  // After a stock purchase: is there enough left for more, and is it worth it?
+  async function leftoverNext(job, cash) {
+    const left = cash - settings.keepOnHand;
+    if (left < 1) return false;
+    let user = userMem;
+    try { user = await getUser(30); } catch (e) { /* use what we have */ }
+    const an = A || { market: marketMem || store.get('market', null), preds: {}, model: null, S: {}, h: 24 };
+    if (!an.market || !user) return { text: `${money(left)} left on hand`, extras: placeOptions(left) };
+    const plan = planDeposit(cash, an, user);
+    if (plan.legs && plan.legs.length) {
+      const o = plan.legs[0];
+      return {
+        text: `✓ Bought · ${money(left)} left`,
+        extras: [{ label: `Buy ${num(o.shares)} ${o.s.acr}`, long: `Buy ${num(o.shares)} more ${o.s.acr}`, fn: () => showQuick(job, plan, 0, 'buy') }, ...placeOptions(left)],
+      };
+    }
+    if (plan.noGood) {
+      // Vault first (keeps the money); otherwise buying anyway beats giving it away.
+      const buyAnyway = { label: `Buy ${plan.best.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [plan.best] }), 0, 'buy') };
+      return { text: `✓ Bought · no good buys for the last ${money(left)}`, extras: [...placeOptions(left), buyAnyway] };
+    }
+    return { text: `✓ Bought · ${money(left)} left`, extras: placeOptions(left) };
+  }
+
+  // Nothing worth buying right now.
+  function showNoGoodBuys(job, plan) {
+    const o = plan.best, amt = plan.avail;
+    const opts = placeOptions(amt);
+    const s = openSheet(`
+      <h3>No good buys right now</h3>
+      <div class="tmm-sub">Every stock you can buy is expected to fall or would put too much in one stock. The best option, ${esc(o.s.acr)}, is expected to change ${o.pred ? pct(o.pred.mean) : '—'} over ${hLabel(A ? A.h : 24)}.</div>
+      <div class="tmm-big">${money(amt)} to put away</div>
+      <div class="tmm-row" id="tmm-ng"></div>
+      <div class="tmm-sub">Buying anyway keeps your money safe in stocks; you only pay the 0.1% fee when you sell.</div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
+    const row = $('#tmm-ng', s);
+    const all = [...opts, { label: `Buy ${num(o.shares)} ${o.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [o] }), 0, 'buy') }];
+    all.forEach((x, i) => { const b = document.createElement('button'); b.className = i ? 'tmm-plain' : 'tmm-act'; b.textContent = x.long || x.label; b.onclick = x.fn; row.appendChild(b); });
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // Too little cash to buy even one share.
+  function showSmallCashOffer(left, why) {
+    const opts = placeOptions(left);
+    const s = openSheet(`
+      <h3>Too little to buy a share</h3>
+      <div class="tmm-sub">${esc(why)}</div>
+      <div class="tmm-big">${money(left)} on hand</div>
+      <div class="tmm-sub">${opts.length ? 'Put it somewhere it can\'t be mugged:' : 'Not enough for a share, and over your church limit in Settings.'}</div>
+      <div class="tmm-row" id="tmm-sc"></div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
+    const row = $('#tmm-sc', s);
+    opts.forEach((x, i) => { const b = document.createElement('button'); b.className = i ? 'tmm-plain' : 'tmm-act'; b.textContent = x.long; b.onclick = x.fn; row.appendChild(b); });
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // ------------------------------------------------------------ faction vault
+  // Faction → Armory (revolver tab) → Deposit. We fill in the money box only;
+  // you tap DEPOSIT MONEY.
+  const FACTION_URL = 'https://www.torn.com/factions.php?step=your&type=1#faction-armoury';
+  const onFactionPage = () => /factions\.php/i.test(location.href);
+  const onArmoury = () => onFactionPage() && /step=your/i.test(location.search) && /armou?ry/i.test(location.hash);
+
+  function startVaultDeposit(amount) {
+    const job = { action: 'vault', amount: Math.floor(amount), t: Date.now() };
+    closeSheet();
+    if (!onArmoury()) {
+      sessionStorage.setItem(LS + 'pending', JSON.stringify(job));
+      showPill('Opening the faction armory…');
+      location.href = FACTION_URL;
+      return;
+    }
+    fillVault(job);
+  }
+
+  // The Donate tab has a money box and a points box. Use the money one.
+  function findVaultInput() {
+    const isDepositBtn = (el) => /^(deposit|donate)\b/i.test(elText(el));
+    const isPoints = (el) => /point/i.test(elText(el));
+    const cands = $$('input').filter(visibleInput);
+    const money = cands.filter((i) => i.classList.contains('input-money'));
+    for (const inp of [...money, ...cands.filter((i) => !money.includes(i))]) {
+      let el = inp.parentElement;
+      for (let d = 0; el && d < 5; d++, el = el.parentElement) {
+        const btns = $$("button, input[type='submit'], input[type='button'], a", el).filter((x) => !x.closest('#tmm-root') && isDepositBtn(x));
+        if (!btns.length) continue;
+        const pts = btns.some(isPoints), mon = btns.some((x) => !isPoints(x));
+        if (mon && !pts) return inp;           // only a money button nearby
+        if (pts && !mon) break;                // this is the points box
+        // both buttons share this container: decide by the box's own label
+        const near = elText(inp.parentElement.parentElement || inp.parentElement);
+        if (/point/i.test(near) && !/money|\$/i.test(near)) break;
+        return inp;
+      }
+    }
+    return null;
+  }
+
+  async function fillVault(job) {
+    const cash = domCash();
+    const amount = Math.max(0, Math.floor(Math.min(job.amount, cash != null ? cash : job.amount)));
+    if (amount < 1) { showPill('No cash on hand to deposit.'); return; }
+    const copy = { label: 'Copy', fn: () => { try { navigator.clipboard.writeText(String(amount)); updatePill(`Copied ${money(amount)} · paste it in the money box`); } catch (e) { /* ignore */ } } };
+    showPill(`Faction vault ${money(amount)}`, '', copy);
+    if (!/armou?ry/i.test(location.hash)) { try { location.hash = '#faction-armoury'; } catch (e) { /* ignore */ } }
+    let input = await waitFor(findVaultInput, 6000);
+    if (!input) {
+      // The Armory tab is the revolver icon: find it by its link, not its text.
+      const arm = $$('a, li, button, [role=tab]').find((el) => !el.closest('#tmm-root') &&
+        (/faction-armou?ry/i.test(el.getAttribute('href') || '') || /armou?ry/i.test(el.getAttribute('aria-controls') || '') || /^armou?ry$/i.test(el.getAttribute('title') || el.getAttribute('aria-label') || '')));
+      if (arm) { try { arm.click(); } catch (e) { /* ignore */ } }
+      input = await waitFor(findVaultInput, 5000);
+    }
+    if (!pill) return;
+    if (!input) { updatePill(`Open Faction → Armory, type ${money(amount)}, tap Deposit Money`); return; }
+    input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const ok = await typeInto(input, amount);
+    input.classList.add('tmm-filled');
+    setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
+    updatePill(ok ? `${money(amount)} filled in · tap Deposit Money` : `Type ${money(amount)} in the money box, tap Deposit Money`);
+    const startCash = domCash();
+    const started = Date.now();
+    watchTimer = setInterval(() => {
+      if (Date.now() - started > 5 * 60000 || !pill) { clearInterval(watchTimer); watchTimer = null; return; }
+      const c = domCash();
+      if (startCash != null && c != null && c < startCash) {
+        clearInterval(watchTimer); watchTimer = null;
+        DB.add('executions', { t: Date.now(), kind: 'vault', action: 'deposit', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        setTimeout(() => clearBox(input), 400); // Torn leaves the old amount in the box
+        showPill(`✓ Deposited to faction vault · cash ${money(c)}`, 'ok');
+        const p0 = pill;
+        setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);
+      }
+    }, 1000);
+  }
+
+  function startDonation(amount) {
+    const job = { action: 'donate', amount: Math.floor(amount), t: Date.now() };
+    if (!onChurchPage()) {
+      sessionStorage.setItem(LS + 'pending', JSON.stringify(job));
+      closeSheet();
+      showPill('Opening the church…');
+      location.href = CHURCH_URL + '#church-donate';
+      return;
+    }
+    closeSheet();
+    fillDonation(job);
+  }
+
+  const visibleInput = (i) => !/^(hidden|button|submit|checkbox|radio|image|file)$/i.test(i.type) && i.offsetParent !== null && !i.closest('#tmm-root');
+
+  // The church has tabs "Donate / Ceremony / Pray" and opens on Ceremony.
+  // In the Donate tab, a "Donate" button under the chest reveals the amount
+  // box and Torn's "give" button. We tap the tab and that reveal button only.
+  // We never tap "give" — that's yours.
+  const elText = (el) => (el.textContent || el.value || el.getAttribute('alt') || el.getAttribute('title') || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+  const innermost = (list) => list.filter((el) => !list.some((o) => o !== el && el.contains(o)));
+  function isChurchTab(el) {
+    let p = el.parentElement;
+    for (let d = 0; p && d < 5; d++, p = p.parentElement) {
+      const tx = elText(p);
+      if (/ceremony/i.test(tx) && /pray/i.test(tx) && tx.length < 120) return true;
+    }
+    return false;
+  }
+  function donateCandidates() {
+    return $$('a, li, button, span, div, img, input[type=button], [role=tab], [role=button]').filter((el) =>
+      !el.closest('#tmm-root') && el.offsetParent !== null && /^donate$/i.test(elText(el)));
+  }
+  function findDonateTab() {
+    const tabs = innermost(donateCandidates().filter(isChurchTab));
+    return tabs[0] || null;
+  }
+  function findRevealButton() {
+    const btns = innermost(donateCandidates().filter((el) => !isChurchTab(el) && !/give/i.test(elText(el))));
+    return btns[0] || null;
+  }
+  async function openDonateBox() {
+    if (findDonateInput()) return true;
+    const tab = await waitFor(findDonateTab, 5000);
+    if (tab) {
+      tab.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      await sleep(250);
+      try { tab.click(); } catch (e) { /* ignore */ }
+    }
+    if (await waitFor(findDonateInput, 800)) return true;
+    const reveal = await waitFor(findRevealButton, 4000);
+    if (reveal) {
+      reveal.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      await sleep(250);
+      try { reveal.click(); } catch (e) { /* ignore */ }
+    }
+    return !!(await waitFor(findDonateInput, 4000));
+  }
+
+  // Finds the church's donation box. Never presses Torn's Donate button.
+  function findDonateInput() {
+    // 1) Inside the Donate tab's own panel.
+    const panels = [document.getElementById('church-donate'), ...$$("[id*='donate' i], [class*='donate' i]")]
+      .filter((el) => el && !el.closest('#tmm-root') && el.offsetParent !== null);
+    for (const pnl of panels) {
+      const inp = $$('input', pnl).find(visibleInput);
+      if (inp) return inp;
+    }
+    // 2) A visible box that sits next to a real Donate button (not the tab link).
+    const isDonateBtn = (el) => el.tagName !== 'A' && /donat/i.test((el.textContent || el.value || '').trim());
+    for (const inp of $$('input').filter(visibleInput)) {
+      let el = inp.parentElement;
+      for (let d = 0; el && d < 4; d++, el = el.parentElement) {
+        if ($$("button, input[type='submit'], input[type='button']", el).some(isDonateBtn)) return inp;
+      }
+    }
+    return null;
+  }
+
+  // Minimal: only a small bar at the top showing the amount, never a big panel.
+  async function fillDonation(job) {
+    const cash = domCash();
+    const amount = Math.max(0, Math.floor(Math.min(job.amount, cash != null ? cash : job.amount)));
+    if (amount < 1) { showPill('No cash on hand to donate.'); return; }
+    const copy = { label: 'Copy', fn: () => { try { navigator.clipboard.writeText(String(amount)); updatePill(`Copied ${money(amount)} · paste it in the Donate box`); } catch (e) { /* ignore */ } } };
+    showPill(`Donate ${money(amount)}`, '', copy);
+    await openDonateBox();
+    const input = findDonateInput();
+    if (!pill) return;
+    if (!input) { updatePill(`Open Donate, type ${money(amount)}, tap give`); return; }
+    input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const ok = await typeInto(input, amount);
+    input.classList.add('tmm-filled');
+    setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
+    updatePill(ok ? `${money(amount)} filled in · tap give` : `Type ${money(amount)} in the box, then tap give`);
+    const startCash = domCash();
+    const started = Date.now();
+    watchTimer = setInterval(() => {
+      if (Date.now() - started > 5 * 60000 || !pill) { clearInterval(watchTimer); watchTimer = null; return; }
+      const c = domCash();
+      if (startCash != null && c != null && c < startCash) {
+        clearInterval(watchTimer); watchTimer = null;
+        DB.add('executions', { t: Date.now(), kind: 'donation', action: 'donate', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
+        setTimeout(() => clearBox(input), 400);
+        showPill(`✓ Donated · cash ${money(c)}`, 'ok');
+        const p0 = pill;
+        setTimeout(() => { if (pill === p0) closeSheet(); }, 5000);
+      }
+    }, 1000);
+  }
+
+  // Generic: show one leg, fill Torn's box, watch for your confirmation.
+  async function showLeg({ title, action, stock, shares, price, lines, warn, alts, onAlt, recompute, onDone, kind, extras, cost }) {
+    const isSell = action === 'sell';
+    const btn = isSell ? 'Sell' : 'Buy';
+    const s = openSheet(`
+      <h3>${esc(title)}</h3>
+      <div class="tmm-big">${btn} ${num(shares)} ${esc(stock.acr)}</div>
+      ${lines.map((l) => `<div class="tmm-sub">${esc(l)}</div>`).join('')}
+      ${(warn || []).map((w) => `<div class="tmm-warn">${esc(w)}</div>`).join('')}
+      <div class="tmm-status" id="tmm-status">Filling in the ${btn} box…</div>
+      ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}${action === 'sell' && a.profit != null ? (a.profit >= 0 ? ' · in profit' : ' · at a loss') : ''}</button>`).join('')}</div>` : ''}
+      ${extras && extras.length ? `<div class="tmm-row">${extras.map((x, i) => `<button class="tmm-plain" data-ex="${i}">${esc(x.long || x.label)}</button>`).join('')}</div>` : ''}
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-copy">Copy share count</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    $$('[data-ex]', s).forEach((b) => (b.onclick = () => extras[Number(b.dataset.ex)].fn()));
+    const cur = { shares, price };
+    $('#tmm-copy', s).onclick = () => { try { navigator.clipboard.writeText(String(cur.shares)); $('#tmm-copy', s).textContent = 'Copied'; } catch (e) { /* ignore */ } };
+    $$('[data-alt]', s).forEach((b) => (b.onclick = () => onAlt(Number(b.dataset.alt))));
+    const status = $('#tmm-status', s);
+    const filled = await openAndFill(stock.id, action, shares);
+    const res = filled.res;
+    const ok = res === 'ok';
+    if (!sheet || !document.body.contains(status)) return;
+    status.innerHTML = ok
+      ? `Share count is filled in. Tap Torn's <b>${btn}</b> button in the ${esc(stock.acr)} panel to confirm.`
+      : res === 'unverified'
+        ? `I tried to enter <b>${num(shares)}</b> but Torn's ${btn} box didn't take it. Clear the box and type <b>${num(shares)}</b> yourself, or use Copy share count.`
+        : settings.autoOpen
+        ? `Couldn't find the ${btn} box. Tap the Owned cell on ${esc(stock.acr)} and type <b>${num(shares)}</b>, or use Copy share count.`
+        : `Tap the Owned cell on ${esc(stock.acr)}. The share count fills in when the panel opens.`;
+    const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · tap ${btn}`;
+    // Collapse to a small card at the top: keeps the explanation readable without covering Torn's button.
+    if (ok) minimizeSheet(pillText(), extras, [...(warn || []), ...lines]);
+    const guard = async () => {
+      if (!filled.input || !sheet || !document.body.contains(status) || !watchTimer) return;
+      const inputs = boxInputs(filled.input);
+      if (boxShows(inputs, cur.shares)) return;
+      if (await typeInto(filled.input, cur.shares)) return;
+      expandSheet();
+      status.innerHTML = `Torn changed the ${btn} box back. Clear it and type <b>${num(cur.shares)}</b> yourself, or use Copy share count.`;
+    };
+    if (ok) { setTimeout(guard, 1200); setTimeout(guard, 3500); }
+    const legRow = findRow(stock.id);
+    let warned = false;
+    const confirmObs = legRow && new MutationObserver(() => {
+      const scope = panelScope(legRow);
+      const n = confirmShares(scope, action);
+      if (n == null) return;
+      if (n !== cur.shares && !warned) {
+        warned = true;
+        expandSheet();
+        status.className = 'tmm-err';
+        status.innerHTML = `STOP — Torn is asking to ${btn.toLowerCase()} <b>${num(n)}</b> shares, not <b>${num(cur.shares)}</b>. Tap <b>No</b> / Cancel in Torn's box, then type <b>${num(cur.shares)}</b> into the ${btn} box yourself.`;
+      } else if (n === cur.shares && warned) {
+        warned = false;
+        status.className = 'tmm-ok';
+        status.innerHTML = `Torn now shows ${num(n)} shares. Correct — tap Torn's confirm.`;
+      }
+    });
+    if (confirmObs) {
+      for (const node of panelScope(legRow)) confirmObs.observe(node, { childList: true, subtree: true, characterData: true });
+      setTimeout(() => confirmObs.disconnect(), 5 * 60000);
+    }
+    const startCash = domCash();
+    const started = Date.now();
+    watchTimer = setInterval(async () => {
+      if (Date.now() - started > 5 * 60000) { clearInterval(watchTimer); watchTimer = null; return; }
+      const cash = domCash();
+      if (startCash != null && cash != null && cash !== startCash) {
+        clearInterval(watchTimer); watchTimer = null;
+        if (confirmObs) confirmObs.disconnect();
+        try {
+          await DB.add('executions', { t: Date.now(), kind, action, sid: stock.id, acr: stock.acr, shares: cur.shares, expectedPrice: cur.price, actualPrice: Math.abs(cash - startCash) / cur.shares / (isSell ? 1 - FEE : 1), cashBefore: startCash, cashAfter: cash, cost: cost || null });
+        } catch (e) { /* logging is best-effort */ }
+        status.className = 'tmm-ok';
+        status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}.`;
+        userMem = null;
+        const waitSheet = sheet;
+        await waitForBack(stock.id, () => {
+          const msg = `✓ ${isSell ? 'Sold' : 'Bought'} · now tap BACK in Torn's panel`;
+          status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}. <b>Now tap Torn's BACK button</b> (highlighted) to continue.`;
+          if (sheet && sheet.style.display === 'none') showPill(msg, 'ok');
+          else if (sheet) minimizeSheet(msg);
+        });
+        if (sheet !== waitSheet) return; // closed or replaced while waiting
+        const next = onDone ? await onDone(cash, status) : false;
+        if (next === true) { expandSheet(); return; }
+        const doneSheet = sheet;
+        const doneText = `✓ ${isSell ? 'Sold' : 'Bought'} · cash ${money(cash)}`;
+        if (next && next.extras && next.extras.length) {
+          if (doneSheet && doneSheet.style.display === 'none') showPill(next.text || doneText, 'ok', next.extras);
+          else {
+            const row = document.createElement('div'); row.className = 'tmm-row';
+            next.extras.forEach((x, i) => { const b = document.createElement('button'); b.className = i ? 'tmm-plain' : 'tmm-act'; b.textContent = x.long || x.label; b.onclick = x.fn; row.appendChild(b); });
+            if (next.text) { const d = document.createElement('div'); d.className = 'tmm-sub'; d.textContent = next.text; status.after(d); d.after(row); } else status.after(row);
+          }
+          setTimeout(() => { if (sheet === doneSheet && !watchTimer) closeSheet(); }, 25000);
+        } else {
+          if (doneSheet && doneSheet.style.display === 'none') showPill(doneText, 'ok');
+          setTimeout(() => { if (sheet === doneSheet && !watchTimer) closeSheet(); }, 5000);
+        }
+        return;
+      }
+      const p = domPrice(stock.id);
+      if (p && Math.abs(p - cur.price) > 1e-9 && recompute) {
+        const ns = recompute(p);
+        cur.price = p;
+        if (ns > 0 && ns !== cur.shares) {
+          cur.shares = ns;
+          const row = findRow(stock.id);
+          const inp = row && findTradeInput(row, action);
+          if (inp) await typeInto(inp, ns);
+          status.innerHTML = `Price moved to $${p.toFixed(2)}. Updated to <b>${num(ns)}</b> shares. Tap Torn's <b>${btn}</b> button to confirm.`;
+          updatePill(`Price moved · ${pillText()}`);
+        }
+      }
+    }, 1500);
+  }
+
+  function showSpread(job, plan, single) {
+    const s = openSheet(`
+      <h3>Spread ${money(plan.spend)} over ${plan.legs.length} stocks</h3>
+      <div class="tmm-sub">That's too much for one stock: it would put more than ${settings.maxWeightPct}% of your portfolio in it. Spreading it gives the trade ideas more stocks to see-saw between. These have the best outlook right now, and the smallest holdings get topped up first.${plan.typical > SPREAD_PER_STOCK ? ` Each stock gets at least about ${money(plan.perStock)}, your typical withdrawal, so a withdrawal can come from a single stock.` : ''}</div>
+      <table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>Cost</th><th>Outlook</th></tr>
+        ${plan.legs.map((o) => `<tr><td>${esc(o.s.acr)}</td><td>${num(o.shares)}</td><td>${money(o.shares * o.price)}</td><td class="tmm-pos">${pct(o.pred.mean)}</td></tr>`).join('')}
+      </table>
+      ${plan.left > 1e6 ? `<div class="tmm-warn">${money(plan.left)} is left over: only ${plan.good} stock${plan.good === 1 ? '' : 's'} look${plan.good === 1 ? 's' : ''} good right now, and none goes over ${settings.maxWeightPct}%. Keep it for later${vaultAvailable() ? ' or put it in the faction vault' : ''}, or consider the City Bank (see Bank in the menu).</div>` : ''}
+      <div class="tmm-sub">Outlook is the model's expected ${hLabel(A ? A.h : 24)} return. Prices move, so share counts are rechecked at each purchase.</div>
+      <div class="tmm-row"><button class="tmm-act" id="tmm-sp-go">Start buying (${plan.legs.length} purchases)</button></div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-sp-one">Buy one stock instead</button>${vaultAvailable() ? '<button class="tmm-plain" id="tmm-sp-vault">Faction vault instead</button>' : ''}<button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    $('#tmm-sp-go', s).onclick = () => showQuick(job, plan, 0, 'buy');
+    $('#tmm-sp-one', s).onclick = () => showQuick(job, single, 0, 'buy');
+    const v = $('#tmm-sp-vault', s); if (v) v.onclick = () => startVaultDeposit(plan.avail);
+  }
+
+  function showQuick(job, plan, legIdx, action) {
+    const o = plan.legs[legIdx];
+    const isSell = action === 'sell';
+    const buf = 1 + settings.bufferPct / 100;
+    const value = isSell ? o.shares * o.price * (1 - FEE) : o.shares * o.price;
+    const legTag = plan.legs.length > 1 ? ` (sale ${legIdx + 1} of ${plan.legs.length})` : '';
+    const warn = [];
+    if (plan.mode === 'breaks') warn.push(`This sale drops ${o.s.acr} below a benefit block. Pick another stock below to avoid that.`);
+    if (plan.mode === 'split') warn.push('No single stock covers this without breaking a benefit, so it is split into separate sales.');
+    if (!isSell && o.completes) warn.push(`This completes your next ${o.s.acr} benefit block.`);
+    if (!isSell && o.overweight) warn.push(`This puts more than ${settings.maxWeightPct}% of your portfolio in ${o.s.acr}.`);
+    if (isSell && o.profit != null && o.profit < 0 && plan.bank) {
+      warn.push(`${o.s.acr} is below what you paid: this sale locks in a loss of about ${money(o.shares * (o.cost - o.price * (1 - FEE)))}. The bank interest makes it back.`);
+    } else if (isSell && o.profit != null && o.profit < 0) {
+      const loss = o.shares * (o.cost - o.price * (1 - FEE));
+      warn.push(plan.anyProfit
+        ? `${o.s.acr} is below what you paid: this sale loses about ${money(loss)}. A stock in profit is listed below.`
+        : `All your stocks are below what you paid. This is the smallest hit: about ${money(loss)}.`);
+    }
+    const profitLine = isSell && o.profit != null && o.profit >= 0
+      ? `You paid about $${o.cost.toFixed(2)} a share, so this sells at ${pctPlain(o.profit, 2)} after the fee: no loss.`
+      : null;
+    const avgLine = !isSell && o.owned > 0 && o.cost
+      ? `You own ${num(o.owned)} ${o.s.acr} at an average of $${o.cost.toFixed(2)}. Buying at $${o.price.toFixed(2)} ${o.price < o.cost ? 'lowers' : o.price > o.cost ? 'raises' : 'keeps'} that average${o.price !== o.cost ? ' a little' : ''}.`
+      : null;
+    const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.spread ? o.amt : plan.avail;
+    showLeg({
+      kind: plan.bank ? 'bank' : 'cash', cost: o.cost,
+      title: plan.bank ? `Move to the bank${legTag}` : plan.spread ? `Spread ${money(plan.spend)} (purchase ${legIdx + 1} of ${plan.legs.length})` : isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
+      action, stock: o.s, shares: o.shares, price: o.price,
+      lines: [
+        isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : plan.spread ? `At about $${o.price.toFixed(2)}, this uses about ${money(value)} of the ${money(plan.spend)} you're spreading.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
+        plan.bank ? `Part of your bank move: ${money(job.amount)} in total across ${plan.legs.length} sale${plan.legs.length > 1 ? 's' : ''}.` : quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
+        ...(profitLine ? [profitLine] : []),
+        ...(avgLine ? [avgLine] : []),
+      ],
+      warn,
+      alts: plan.alts,
+      onAlt: (i) => {
+        const alt = plan.alts[i];
+        const rest = plan.alts.filter((x) => x !== alt).concat([o]);
+        showQuick(job, Object.assign({}, plan, { legs: [alt], alts: rest, mode: alt.breaks ? 'breaks' : plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode }), 0, action);
+      },
+      recompute: (p) => isSell
+        ? Math.min(o.cap || o.owned, Math.ceil((target * buf) / (p * (1 - FEE))))
+        : Math.floor(target / (p * buf)),
+      extras: !isSell && vaultAvailable() ? [{ label: 'Vault instead', long: `Deposit ${money(plan.avail)} to the faction vault instead`, fn: () => startVaultDeposit(plan.avail) }] : null,
+      onDone: async (cash, status) => {
+        if (plan.spread && legIdx + 1 < plan.legs.length) {
+          const b = document.createElement('button');
+          b.className = 'tmm-act'; b.textContent = `Next purchase (${plan.legs[legIdx + 1].s.acr})`;
+          b.onclick = () => showQuick(job, plan, legIdx + 1, action);
+          status.after(b);
+          return true;
+        }
+        if (!isSell) return leftoverNext(job, cash);
+        if (isSell && legIdx + 1 < plan.legs.length) {
+          const b = document.createElement('button');
+          b.className = 'tmm-act'; b.textContent = 'Next sale';
+          b.onclick = () => showQuick(job, plan, legIdx + 1, action);
+          status.after(b);
+          return true;
+        }
+        if (plan.bank) return { text: 'All sold. Go straight to the bank and start your new term, so the cash is never left on hand.', extras: [{ label: 'Open the bank', long: 'Open the bank', fn: () => { closeSheet(); location.href = BANK_URL; } }] };
+        return false;
+      },
+    });
+  }
+
+  function showRotation(job, an, user) {
+    const m = an.market.stocks;
+    const sellS = m[job.sell], buyS = m[job.buy];
+    if (!sellS || !buyS) return showError('One of the stocks in this recommendation no longer exists.');
+    const buf = 1 + settings.bufferPct / 100;
+    const goBuy = () => {
+      const cash = domCash() ?? 0;
+      const price = domPrice(buyS.id) || buyS.price;
+      const avail = cash - settings.keepOnHand;
+      const shares = Math.floor(avail / (price * buf));
+      if (shares < 1) return showError(`Not enough cash on hand to buy ${buyS.acr}.`);
+      showLeg({
+        kind: 'rotation', title: 'Rotation, step 2 of 2', action: 'buy', stock: buyS, shares, price,
+        lines: [`Uses about ${money(shares * price)} of your ${money(cash)} cash.`],
+        recompute: (p) => Math.floor(avail / (p * buf)),
+        onDone: async () => {
+          const d = await DB.get('decisions', job.decisionId);
+          if (d) { d.status = 'executed'; await DB.put('decisions', d); }
+        },
+      });
+    };
+    if (job.stage === 'buy') return goBuy();
+    const owned = user.owned[sellS.id] || 0;
+    const spare = owned - Core.protectedShares(sellS.benefit, owned);
+    const shares = Math.min(job.shares, spare);
+    if (shares < 1) return showError(`You no longer have spare ${sellS.acr} shares to sell.`);
+    const price = domPrice(sellS.id) || sellS.price;
+    showLeg({
+      kind: 'rotation', title: 'Rotation, step 1 of 2', action: 'sell', stock: sellS, shares, price,
+      lines: [`About ${money(shares * price * (1 - FEE))} after the 0.1% fee. Next you'll buy ${buyS.acr}.`],
+      onDone: (cash, status) => {
+        sessionStorage.setItem(LS + 'pending', JSON.stringify(Object.assign({}, job, { stage: 'buy', t: Date.now() })));
+        const b = document.createElement('button');
+        b.className = 'tmm-act'; b.textContent = `Confirm buy ${buyS.acr}`;
+        b.onclick = () => { sessionStorage.removeItem(LS + 'pending'); goBuy(); };
+        status.after(b);
+        return true;
+      },
+    });
+  }
+
+  // =====================================================================
+  //  BOOT
+  // =====================================================================
+  function boot() {
+    if (!document.body) return setTimeout(boot, 200);
+    mountUI();
+    const raw = sessionStorage.getItem(LS + 'pending');
+    if (raw) {
+      let job = null;
+      try { job = JSON.parse(raw); } catch (e) { /* ignore */ }
+      if (job && job.action === 'donate' && onChurchPage()) {
+        sessionStorage.removeItem(LS + 'pending');
+        if (Date.now() - job.t < 10 * 60000) fillDonation(job);
+      } else if (job && job.action === 'vault' && onFactionPage()) {
+        sessionStorage.removeItem(LS + 'pending');
+        if (Date.now() - job.t < 10 * 60000) setTimeout(() => fillVault(job), 300);
+      } else if (job && job.action !== 'donate' && job.action !== 'vault' && onStockPage()) {
+        sessionStorage.removeItem(LS + 'pending');
+        if (Date.now() - job.t < 10 * 60000) execute(job);
+      }
+    }
+    if (!window.indexedDB) return;
+    updateCashBadge();
+    const um = document.getElementById('user-money');
+    if (um) new MutationObserver(updateCashBadge).observe(um, { attributes: true, childList: true, characterData: true, subtree: true });
+    setInterval(updateCashBadge, 15000);
+    collectTick();
+    setInterval(collectTick, 60000);
+    setTimeout(updateBadges, 3000);
+    setInterval(updateBadges, 60000);
+    setTimeout(() => { checkForUpdate().then(updateBadges).catch(() => {}); }, 8000);
+  }
+  boot();
+})();
