@@ -67,6 +67,7 @@ Torn's City Bank pays more than stocks for money you can lock away. Tap **Bank**
 - **Your investment** and when its term ends.
 - **How much can move.** Everything in stocks except shares held for benefit blocks and the amount you choose to keep in stocks (Settings, default $10M).
 - **What to sell.** Stocks that are in profit after the 0.1% fee, with how many shares, what you get and the profit you lock in. Stocks below what you paid are listed separately as an option, with how many days of interest it takes to make the loss back.
+- **Your stock wallet.** Deposits and withdrawals made with Moonshine since your last bank move (or over one bank term), the most you've drawn at once, profit locked in by withdrawals, and how much your stocks' prices gained or lost. It then suggests how much to keep in stocks: 1.5× the most you've drawn, never under $5M. Drew $8M of a $10M keep? It suggests $12M. Only drew $3M? It suggests $5M. One tap applies it.
 - **What the bank pays.** Interest on the money you move and on your whole investment, for the term you plan for (2 months by default). Your rate is worked out from Torn's current rate and your Bank Interest merits, or you can type in the rate from your bank page.
 
 Tap **Start selling** and it walks you through each sale like a withdrawal, then offers a button to open the bank. While a term is running the plan is shown but selling waits until it ends, since Torn allows one investment at a time.
@@ -79,7 +80,7 @@ Everything sits behind one small moon icon. Drag it to any edge of the screen. T
 
 - 🟠 An orange dot means you're carrying cash.
 - 🟢 A green dot means there's a trade idea.
-- 🟣 A purple dot means your bank term has ended (or nothing is invested and there's money worth moving).
+- 🟣 A purple dot means your bank term ends within 24 hours or has ended (or nothing is invested and there's money worth moving).
 
 The panels follow Torn's light or dark mode, and they collapse into a thin bar at the top so they never cover Torn's buttons.
 
@@ -210,7 +211,7 @@ Small edges add up over weeks, not days. Check **Market → Details** for the sc
 | Keep in stocks | $10M | Bank advisor: money it leaves in stocks, on top of shares held for benefit blocks |
 | Bank term | 2m | Bank advisor: the term to plan for (1w, 2w, 1m, 2m or 3m) |
 | Bank rate | automatic | Bank advisor: your APR for that term. Blank works it out from Torn's rate and your merits |
-| Purple bank dot | on | Show the purple dot when your bank term ends |
+| Purple bank dot | on | Show the purple dot from 24 hours before your bank term ends |
 | Days of history | 730 | How far back to download prices |
 
 **Not sure what to set?** Market → Details → **Best trade settings** replays recent history the model never trained on with different *minimum gain* and *evidence* settings, compares each with buy-and-hold, and suggests one. Tap **Use these settings** to apply it. Re-test every week or two.

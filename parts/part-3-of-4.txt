@@ -1,35 +1,3 @@
-  #tmm-root .tmm-pill-info{margin:4px 6px 0 0;padding-left:16px;font-weight:400;font-size:12.5px;line-height:1.35;color:var(--muted)}
-  #tmm-root .tmm-pill-info li{margin:2px 0}
-  #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
-  #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  #tmm-root .tmm-pill button{white-space:nowrap}
-  #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
-  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
-  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
-  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
-  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
-
-  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
-    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
-    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
-    <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
-
-  let root, sheet, pill = null, moon, menu, watchTimer = null;
-  const MOON = 46, EDGE_GAP = 6;
-
-  const isDark = () => document.body.classList.contains('dark-mode') || document.documentElement.classList.contains('dark-mode');
-  function applyTheme() { if (root) root.dataset.theme = isDark() ? 'dark' : 'light'; }
-
-  function mountUI() {
-    if (document.getElementById('tmm-root')) return;
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
-    root = document.createElement('div');
-    root.id = 'tmm-root';
-    root.innerHTML = `
-      <button class="tmm-moon" aria-label="Moonshine Asset Manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i><i class="tmm-dot bank"></i></button>
       <div class="tmm-menu" hidden>
         <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
         <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
@@ -515,7 +483,7 @@
       ${f('s-bkeep', 'Keep this much in stocks (shares held for benefit blocks are kept on top of this)', short(settings.bankKeep))}
       ${f('s-bterm', 'Bank term to plan for: 1w, 2w, 1m, 2m or 3m', settings.bankTerm)}
       ${f('s-bapr', 'Your bank rate for that term (APR %). Leave blank to work it out from Torn and your merits', settings.bankApr, 'e.g. 54.76')}
-      ${c('s-bdot', 'Purple dot on the moon when your bank term has ended', settings.bankDot)}
+      ${c('s-bdot', 'Purple dot on the moon from 24 hours before your bank term ends', settings.bankDot)}
       <h4>Data and display</h4>
       ${f('s-days', 'Days of history to download', settings.historyDays)}
       ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
@@ -593,11 +561,11 @@
         has = !!rot && !(skip && skip.k === rot.sell + '>' + rot.buy && Date.now() < skip.until);
       }
       if (moon) moon.classList.toggle('has-opp', has);
-      // Purple dot: your bank term has ended (or nothing is invested and there's money to move).
+      // Purple dot: your bank term ends within 24 hours or has ended (or nothing is invested and there's money to move).
       const bs = bankState();
       let bankDot = false;
       if (settings.bankDot && bs && an.market) {
-        if (bs.state === 'ended') bankDot = true;
+        if (bs.state === 'ended' || (bs.state === 'active' && bs.endsAt - Date.now() <= 24 * 3600000)) bankDot = true;
         else if (bs.state === 'none') { const bp = planBank(an, userMem); bankDot = bp.movable >= 1e6 && bp.legs.length > 0; }
       }
       if (moon) moon.classList.toggle('has-bank', bankDot);
@@ -619,3 +587,73 @@
       <div class="tmm-err" id="tmm-amt-err" hidden></div>
       <div class="tmm-row"><button class="tmm-act" id="tmm-go">Find shares to sell</button><button class="tmm-plain" id="tmm-x">Cancel</button></div>`);
     const inp = $('#tmm-amt', s);
+    setTimeout(() => inp.focus(), 50);
+    const go = (v) => {
+      const amt = parseAmount(v);
+      if (!(amt > 0)) { const e = $('#tmm-amt-err', s); e.hidden = false; e.textContent = 'Enter an amount like 5m, 750k or 2500000.'; return; }
+      store.set('recent', [amt, ...store.get('recent', []).filter((x) => x !== amt)].slice(0, 3));
+      runJob({ action: 'withdraw', amount: amt });
+    };
+    $('#tmm-go', s).onclick = () => go(inp.value);
+    inp.onkeydown = (e) => { if (e.key === 'Enter') go(inp.value); };
+    $$('[data-amt]', s).forEach((b) => (b.onclick = () => go(b.dataset.amt)));
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // ------------------------------------------------------------ bank advisor
+  // Which shares to sell to move money into a City Bank investment.
+  // Keeps shares held for benefit blocks plus your "keep in stocks" amount,
+  // sells stocks that are in profit first (weakest outlook first), and lists
+  // stocks below what you paid separately, as an option.
+  function planBank(an, user) {
+    const L = liveStocks(an, user);
+    const useModel = modelUsable(an);
+    let stockValue = 0, blockValue = 0;
+    const win = [], lose = [];
+    for (const x of Object.values(L)) {
+      if (!x.owned) continue;
+      stockValue += x.owned * x.price;
+      blockValue += (x.owned - Math.max(0, x.spare)) * x.price;
+      if (!x.allowed || x.spare < 1) continue;
+      (x.profit != null && x.profit < 0 ? lose : win).push(x);
+    }
+    const free = stockValue - blockValue;
+    const movable = Math.max(0, free - settings.bankKeep);
+    const outlook = (x) => (useModel && x.pred ? x.pred.mean : 0);
+    // In profit: weakest expected return first, then the biggest profit. No purchase record: after those.
+    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.profit || 0) - (a.profit || 0)));
+    // Below what you paid: smallest loss first.
+    lose.sort((a, b) => (b.profit - a.profit) || (outlook(a) - outlook(b)));
+    const pick = (list, amount) => {
+      const legs = []; let left = amount;
+      for (const x of list) {
+        const net = x.price * (1 - FEE);
+        if (left < net) continue;
+        const shares = Math.min(x.spare, Math.floor(left / net));
+        const get = shares * net;
+        if (shares < 1 || get < 10000) continue;
+        legs.push({ x, sid: x.s.id, shares, get, gain: x.cost ? shares * (net - x.cost) : null });
+        left -= get;
+      }
+      return legs;
+    };
+    const legs = pick(win, movable);
+    const proceeds = legs.reduce((a, l) => a + l.get, 0);
+    const lossLegs = pick(lose, movable - proceeds);
+    return {
+      stockValue, blockValue, free, movable, legs, proceeds,
+      gain: legs.reduce((a, l) => a + (l.gain || 0), 0),
+      lossLegs, lossProceeds: lossLegs.reduce((a, l) => a + l.get, 0),
+      loss: -lossLegs.reduce((a, l) => a + (l.gain || 0), 0),
+    };
+  }
+
+  // Deposits and withdrawals made with Moonshine since your last bank move
+  // (or over one bank term), how much your stocks gained, and how much of
+  // your "keep in stocks" money you actually used.
+  const KEEP_MIN = 5e6;
+  async function walletStats(an, r) {
+    const now = Date.now();
+    const execs = (await DB.all('executions')).sort((a, b) => a.t - b.t);
+    const lastMove = execs.filter((e) => e.kind === 'bank').reduce((m, e) => Math.max(m, e.t), 0);
+    const from = Math.max(lastMove, now - r.days * 86400000);

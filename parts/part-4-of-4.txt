@@ -1,62 +1,53 @@
-    setTimeout(() => inp.focus(), 50);
-    const go = (v) => {
-      const amt = parseAmount(v);
-      if (!(amt > 0)) { const e = $('#tmm-amt-err', s); e.hidden = false; e.textContent = 'Enter an amount like 5m, 750k or 2500000.'; return; }
-      store.set('recent', [amt, ...store.get('recent', []).filter((x) => x !== amt)].slice(0, 3));
-      runJob({ action: 'withdraw', amount: amt });
-    };
-    $('#tmm-go', s).onclick = () => go(inp.value);
-    inp.onkeydown = (e) => { if (e.key === 'Enter') go(inp.value); };
-    $$('[data-amt]', s).forEach((b) => (b.onclick = () => go(b.dataset.amt)));
-    $('#tmm-x', s).onclick = closeSheet;
+    const snaps = (await DB.all('snapshots')).filter((x) => x.t * 1000 >= from).sort((a, b) => a.t - b.t);
+    const ev = execs.filter((e) => e.kind === 'cash' && e.t > from && e.cashAfter != null && e.cashBefore != null);
+    const firstSeen = Math.min(...[snaps[0] && snaps[0].t * 1000, ev[0] && ev[0].t].filter(Boolean), now);
+    let dep = 0, depN = 0, wd = 0, wdN = 0, level = 0, top = 0, used = 0, realized = 0, realN = 0;
+    for (const e of ev) {
+      const amt = Math.abs(e.cashAfter - e.cashBefore);
+      if (e.action === 'sell') {
+        wd += amt; wdN++; level -= amt;
+        if (e.cost > 0 && e.shares > 0) { realized += amt - e.shares * e.cost; realN++; }
+      } else { dep += amt; depN++; level += amt; }
+      top = Math.max(top, level);
+      used = Math.max(used, top - level); // the most you'd drawn down at any one time
+    }
+    let gain = null;
+    if (an && an.S && snaps.length > 1) {
+      gain = 0;
+      const px = (sid, t) => { const S = an.S[sid]; if (!S) return NaN; const i = Core.idxAt(S, t); return i < 0 ? NaN : Math.exp(S.lp[i]); };
+      for (let k = 1; k < snaps.length; k++) {
+        const a = snaps[k - 1], b = snaps[k];
+        for (const [sid, sh] of Object.entries(a.holdings || {})) {
+          const d = px(sid, b.t) - px(sid, a.t);
+          if (Number.isFinite(d)) gain += sh * d;
+        }
+      }
+    }
+    const days = (now - Math.max(from, firstSeen)) / 86400000;
+    const rec = Math.max(KEEP_MIN, Math.ceil((used * 1.5) / 1e6) * 1e6);
+    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, any: ev.length > 0 };
   }
 
-  // ------------------------------------------------------------ bank advisor
-  // Which shares to sell to move money into a City Bank investment.
-  // Keeps shares held for benefit blocks plus your "keep in stocks" amount,
-  // sells stocks that are in profit first (weakest outlook first), and lists
-  // stocks below what you paid separately, as an option.
-  function planBank(an, user) {
-    const L = liveStocks(an, user);
-    const useModel = modelUsable(an);
-    let stockValue = 0, blockValue = 0;
-    const win = [], lose = [];
-    for (const x of Object.values(L)) {
-      if (!x.owned) continue;
-      stockValue += x.owned * x.price;
-      blockValue += (x.owned - Math.max(0, x.spare)) * x.price;
-      if (!x.allowed || x.spare < 1) continue;
-      (x.profit != null && x.profit < 0 ? lose : win).push(x);
-    }
-    const free = stockValue - blockValue;
-    const movable = Math.max(0, free - settings.bankKeep);
-    const outlook = (x) => (useModel && x.pred ? x.pred.mean : 0);
-    // In profit: weakest expected return first, then the biggest profit. No purchase record: after those.
-    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.profit || 0) - (a.profit || 0)));
-    // Below what you paid: smallest loss first.
-    lose.sort((a, b) => (b.profit - a.profit) || (outlook(a) - outlook(b)));
-    const pick = (list, amount) => {
-      const legs = []; let left = amount;
-      for (const x of list) {
-        const net = x.price * (1 - FEE);
-        if (left < net) continue;
-        const shares = Math.min(x.spare, Math.floor(left / net));
-        const get = shares * net;
-        if (shares < 1 || get < 10000) continue;
-        legs.push({ x, sid: x.s.id, shares, get, gain: x.cost ? shares * (net - x.cost) : null });
-        left -= get;
-      }
-      return legs;
-    };
-    const legs = pick(win, movable);
-    const proceeds = legs.reduce((a, l) => a + l.get, 0);
-    const lossLegs = pick(lose, movable - proceeds);
-    return {
-      stockValue, blockValue, free, movable, legs, proceeds,
-      gain: legs.reduce((a, l) => a + (l.gain || 0), 0),
-      lossLegs, lossProceeds: lossLegs.reduce((a, l) => a + l.get, 0),
-      loss: -lossLegs.reduce((a, l) => a + (l.gain || 0), 0),
-    };
+  function walletCard(W) {
+    const since = W.lastMove ? `since your last bank move (${new Date(W.lastMove).toLocaleDateString()})` : `over the last ${Math.max(1, Math.round(W.days))} day${Math.round(W.days) === 1 ? '' : 's'}`;
+    const kv = (k, v, cls = '') => `<tr><td>${k}</td><td class="${cls}">${v}</td></tr>`;
+    const sign = (x) => (x >= 0 ? '+' : '−') + money(Math.abs(x)).replace('-', '');
+    const keep = settings.bankKeep;
+    let advice;
+    if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
+    else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
+    else advice = `<div class="tmm-sub">You've drawn at most <b>${money(W.used)}</b> of the ${money(keep)} you keep in stocks. ${W.rec > keep ? 'Raise' : 'Lower'} it to <b>${money(W.rec)}</b>${W.rec > keep ? ' so you have room to spare' : ' and move the rest to the bank'}.</div>
+        <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
+    return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
+      <table class="tmm-tbl">
+        ${kv(`Deposits (${W.depN})`, money(W.dep))}
+        ${kv(`Withdrawals (${W.wdN})`, money(W.wd))}
+        ${kv('Most drawn at once', money(W.used))}
+        ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
+        ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
+      </table>
+      ${advice}
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is 1.5× the most you've drawn, and never under ${money(KEEP_MIN)}.</div></div>`;
   }
 
   async function showAdvisor() {
@@ -77,7 +68,7 @@
       const tName = TERM_NAME[r.term];
 
       const bankLine = !bs ? `<div class="tmm-warn">Couldn't read your bank investment from Torn.</div>`
-        : bs.state === 'active' ? `<div class="tmm-big">${money(bs.amount)} invested</div><div class="tmm-sub">Your term ends in <b>${timeLeft(bs.endsAt - Date.now())}</b>. Torn allows one investment at a time, so the plan below is for when it ends.</div>`
+        : bs.state === 'active' ? `<div class="tmm-big">${money(bs.amount)} invested</div><div class="tmm-sub">Your term ends in <b>${timeLeft(bs.endsAt - Date.now())}</b>.${bs.endsAt - Date.now() <= 24 * 3600000 ? ' <b>Get ready:</b> check the plan below and your Keep in stocks amount.' : ''} Torn allows one investment at a time, so the plan below is for when it ends.</div>`
         : bs.state === 'ended' ? `<div class="tmm-big tmm-pos">Your term has ended</div><div class="tmm-sub">${money(bs.amount)} is ready. Collect it, add the money from the sales below, and start one new term with everything.</div>`
         : `<div class="tmm-big">Nothing invested</div><div class="tmm-sub">You have no bank investment running.</div>`;
       const rateLine = r.apr
@@ -95,7 +86,7 @@
       const rows = (legs) => `<table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>You get</th><th>Profit</th></tr>
         ${legs.map((l) => `<tr><td>${esc(l.x.s.acr)}</td><td>${num(l.shares)}</td><td>${money(l.get)}</td><td class="${l.gain == null ? '' : l.gain >= 0 ? 'tmm-pos' : 'tmm-neg'}">${l.gain == null ? '—' : (l.gain >= 0 ? '+' : '') + money(l.gain) + ` (${pctPlain(l.x.profit, 1)})`}</td></tr>`).join('')}</table>`;
 
-      let plan;
+      let plan, wirePlan = null;
       if (P.movable < 1e5) {
         plan = `<div class="tmm-card"><div class="tmm-sub">Nothing to move: your spare stocks are within the ${money(settings.bankKeep)} you keep in stocks. Lower that amount in Market → Settings to move more.</div></div>`;
       } else if (!P.legs.length && !P.lossLegs.length) {
@@ -121,7 +112,7 @@
             <div class="tmm-row"><button class="tmm-act" id="tmm-bank-go" ${bs && bs.state === 'active' ? 'disabled' : ''}>${bs && bs.state === 'active' ? `Available when your term ends (${timeLeft(bs.endsAt - Date.now())})` : 'Start selling'}</button></div>
             <div class="tmm-sub">The script fills in each sale; you tap Sell. After the last one, go straight to the bank so the cash is never left on hand.</div>
           </div>`;
-        setTimeout(() => {
+        wirePlan = () => {
           const cb = $('#tmm-bank-loss', box), sum = $('#tmm-bank-sum', box), go = $('#tmm-bank-go', box);
           if (cb) cb.onchange = () => { sum.innerHTML = summary(cb.checked ? withLoss : P.proceeds); };
           if (go) go.onclick = () => {
@@ -129,9 +120,15 @@
             if (!legs.length) return;
             runJob({ action: 'bank', amount: Math.round(legs.reduce((a, l) => a + l.get, 0)), legs: legs.map((l) => ({ sid: l.sid, shares: l.shares })) });
           };
-        }, 0);
+        };
       }
-      box.innerHTML = `<div class="tmm-card">${bankLine}${rateLine}</div><div class="tmm-card">${holdings}</div>${plan}`;
+      let W = null;
+      try { W = await walletStats(base.S && Object.keys(base.S).length ? base : null, r); } catch (e) { /* stats are optional */ }
+      if (!sheet || !document.body.contains(box)) return;
+      box.innerHTML = `<div class="tmm-card">${bankLine}${rateLine}</div><div class="tmm-card">${holdings}</div>${W ? walletCard(W) : ''}${plan}`;
+      if (wirePlan) wirePlan();
+      const ku = $('#tmm-keep-use', box);
+      if (ku) ku.onclick = () => { settings.bankKeep = W.rec; saveSettings(); showAdvisor(); };
     } catch (e) {
       box.innerHTML = `<div class="tmm-err">${esc(e.message || e)}</div>`;
     }
@@ -477,7 +474,7 @@
   }
 
   // Generic: show one leg, fill Torn's box, watch for your confirmation.
-  async function showLeg({ title, action, stock, shares, price, lines, warn, alts, onAlt, recompute, onDone, kind, extras }) {
+  async function showLeg({ title, action, stock, shares, price, lines, warn, alts, onAlt, recompute, onDone, kind, extras, cost }) {
     const isSell = action === 'sell';
     const btn = isSell ? 'Sell' : 'Buy';
     const s = openSheet(`
@@ -548,7 +545,7 @@
         clearInterval(watchTimer); watchTimer = null;
         if (confirmObs) confirmObs.disconnect();
         try {
-          await DB.add('executions', { t: Date.now(), kind, action, sid: stock.id, acr: stock.acr, shares: cur.shares, expectedPrice: cur.price, actualPrice: Math.abs(cash - startCash) / cur.shares / (isSell ? 1 - FEE : 1), cashBefore: startCash, cashAfter: cash });
+          await DB.add('executions', { t: Date.now(), kind, action, sid: stock.id, acr: stock.acr, shares: cur.shares, expectedPrice: cur.price, actualPrice: Math.abs(cash - startCash) / cur.shares / (isSell ? 1 - FEE : 1), cashBefore: startCash, cashAfter: cash, cost: cost || null });
         } catch (e) { /* logging is best-effort */ }
         status.className = 'tmm-ok';
         status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}.`;
@@ -622,7 +619,7 @@
       : null;
     const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
     showLeg({
-      kind: 'cash',
+      kind: plan.bank ? 'bank' : 'cash', cost: o.cost,
       title: plan.bank ? `Move to the bank${legTag}` : isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
       action, stock: o.s, shares: o.shares, price: o.price,
       lines: [
