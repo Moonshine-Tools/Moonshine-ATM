@@ -1,3 +1,8 @@
+      let round = 0;
+      while (round++ < 40) {
+        let work = false;
+        for (let k = 0; k < ids.length; k++) {
+          if (document.visibilityState === 'hidden' && !force) return;
           const sid = ids[k], s = m.stocks[sid];
           const st = prog[sid] || (prog[sid] = {});
           const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };

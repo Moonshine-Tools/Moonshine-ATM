@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.6.0
+// @version      2.6.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.6.0';
+  const SCRIPT_VERSION = '2.6.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -382,7 +382,7 @@
     historyDays: 730,
     minEdgePct: 0.25,
     evidenceT: 1.2,
-    maxWeightPct: 40,
+    maxWeightPct: 20,
     minTrade: 250000,
     showUnvalidated: false,
   };
@@ -391,13 +391,15 @@
     get(k, d) { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
   };
-  const SETTINGS_VER = 3;
+  const SETTINGS_VER = 4;
   let settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
   if ((settings.ver || 1) < SETTINGS_VER) {
     // v2: trade more often for smaller gains. Reset the trade thresholds once.
     if ((settings.ver || 1) < 2) for (const k of ['minEdgePct', 'evidenceT', 'minTrade']) settings[k] = DEFAULTS[k];
     // v3: the church is a last resort, so its default limit drops to $500.
     if ((settings.ver || 1) < 3 && settings.churchMax === 100000) settings.churchMax = DEFAULTS.churchMax;
+    // v4: spread money over at least five stocks so there's more to rotate between.
+    if ((settings.ver || 1) < 4 && settings.maxWeightPct === 40) settings.maxWeightPct = DEFAULTS.maxWeightPct;
     settings.ver = SETTINGS_VER;
     try { localStorage.setItem(LS + 'settings', JSON.stringify(settings)); } catch (e) { /* ignore */ }
   }

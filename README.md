@@ -85,7 +85,7 @@ Before it recommends anything, the model has to prove itself on data it hasn't s
 If it doesn't pass, the Market panel shows **No action** and explains why. On purely random prices, the model correctly fails.
 
 ### 4. Finding a trade
-Every few minutes it compares every pair of stocks: *is the expected return of B, minus the expected return of A, minus the 0.1% fee, big enough and certain enough to be worth moving money?* The size of the trade grows with the strength of the evidence, and one stock can't take more than 40% of your portfolio. If nothing clears the bar, it shows the closest idea and how far it is from qualifying.
+Every few minutes it compares every pair of stocks: *is the expected return of B, minus the expected return of A, minus the 0.1% fee, big enough and certain enough to be worth moving money?* The size of the trade grows with the strength of the evidence, and one stock can't take more than 20% of your portfolio. If nothing clears the bar, it shows the closest idea and how far it is from qualifying.
 
 ### 5. Learning from results
 Every recommendation is logged. Once its time horizon has passed, the script checks what actually happened and shows the track record in **Market → Details**: predicted versus actual gain, and how often it was right.
@@ -136,7 +136,7 @@ This only works if the script was added with **+ → Remote** and the link above
 | Price safety margin | 0.25% | Extra room so a price tick doesn't leave you short |
 | Minimum gain after fees | 0.25% | Smallest expected gain worth suggesting |
 | Evidence required | 1.2× | How much bigger the gain must be than its uncertainty |
-| Most in one stock | 40% | Cap on any single stock's share of your portfolio |
+| Most in one stock | 20% | Cap on any single stock's share of your portfolio, so money is spread over at least five stocks to rotate between |
 | Smallest trade | $250k | Trades smaller than this aren't suggested |
 | Days of history | 730 | How far back to download prices |
 
