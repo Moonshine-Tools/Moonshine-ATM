@@ -2,7 +2,7 @@
 
 **An all-in-one stock market tool for Torn City, built for Torn PDA.**
 
-In Torn, cash on hand gets mugged, so most players keep their money in the stock market. Moonshine makes that fast and smart. Get cash out in a couple of taps, put it back just as quickly, and let the script look for small, tested trades that can grow your money faster than the market.
+In Torn, cash on hand gets mugged, so most players keep their money in the stock market. Moonshine makes that fast and smart. Get cash out in a couple of taps, put it back just as quickly, and let the script look for small, tested trades so money you keep in stocks earns a little instead of sitting idle. **For savings you won't need for a while, Torn's City Bank pays more; see [Stocks or the bank?](#stocks-or-the-bank).**
 
 It fills in the numbers. **You always press Torn's own Buy, Sell or give button.**
 
@@ -150,6 +150,19 @@ How much you get out of Moonshine depends on how much you have in stocks. The sc
 | **$1M – $5M** | Trade ideas sometimes. Set **Smallest trade** to $50k in Settings to see more of them. Small trades still beat the 0.1% fee; they just earn less. |
 | **$5M and up** | The full see-saw strategy has room to work. |
 
+### Stocks or the bank?
+Moonshine is your **wallet**, not your savings account.
+
+| | City Bank investment | Stocks with Moonshine |
+|---|---|---|
+| Return | Guaranteed. Recently about 40–55% APR, and Bank Interest merits raise it | Not guaranteed. About 19% a year in testing (see below) |
+| Getting money out | Locked until the term ends | Any time, in two taps |
+| Mugging risk | None | None |
+
+**Use the bank** for money you won't need for a week or more. **Use stocks with Moonshine** for everything else: cash from fights, missions and sales, money between bank terms, and anything you might spend soon. That money would otherwise sit in your pocket earning nothing and waiting to be mugged.
+
+**Test results:** on 229 days of price history it had never seen, following the trade ideas returned about +12% (+11% more than just holding). That's roughly 3% every two months. It's a nice extra on spare cash, but it doesn't replace a bank investment.
+
 ### How many stocks
 - **Aim for 5–8 different stocks.** The script earns by moving money from stocks that are high to ones that are low, so it needs several to move between. Past about 8, each holding gets too small to trade.
 - **You don't need to pick them.** Deposit chooses the best-placed stock each time, so the spread builds itself.
@@ -161,7 +174,7 @@ The Stock Ticker (50 points from the Points Building) pays off right away as a *
 1. Install the script and let it download price history (5–10 minutes with Torn open).
 2. Tap **Deposit** every time you're carrying cash. Tap **Withdraw** when you need some back. It sells stocks worth more than you paid, so banking doesn't cost you.
 3. Don't expect profit yet. Expected moves are fractions of a percent, so on $100k the gains are pocket change. The win is not getting mugged.
-4. Keep money you'll need soon (gym, travel, items) out of stocks, since every sale costs the 0.1% fee.
+4. Once you have money you won't need for a week or more, put it in a **City Bank investment**. It pays far more than stocks. Stocks are for cash you want to keep within reach.
 5. Once you pass about $1M, set **Smallest trade** to $50k and start following trade ideas.
 
 ### Be patient
@@ -202,6 +215,7 @@ Small edges add up over weeks, not days. Check **Market → Details** for the sc
 
 - **Only runs with Torn open.** Torn PDA can't run scripts in the background. Gaps are filled from tornsy.com history.
 - **Benefits are protected, not valued.** The script never sells shares a benefit needs, but it doesn't put a dollar value on benefits.
+- **Not a replacement for the City Bank.** Bank investments pay more for money you can lock away. Moonshine is for the money you can't.
 - **No guarantees.** Past patterns may not repeat. If the market has no reliable edge, the honest answer is **No action**, and the script will give it.
 - **Torn's pages can change.** If a box can't be found, the script tells you the number to type and offers a Copy button.
 
