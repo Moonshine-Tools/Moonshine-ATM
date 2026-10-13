@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.4.0
+// @version      3.5.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.4.0';
+  const SCRIPT_VERSION = '3.5.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -905,3 +905,27 @@
     } catch (e) { /* rate unknown; the advisor asks for it */ }
     try {
       const j = await api('user/?selections=merits');
+      const m = j.merits || {};
+      merits = Number(m['Bank Interest'] ?? m.bank_interest ?? m.bankInterest) || 0;
+    } catch (e) { /* keep the last known value */ }
+    const out = { t: Date.now(), rates: rates || (c && c.rates) || null, merits };
+    if (out.rates) store.set('bankRates', out);
+    return out;
+  }
+
+  function termRate(br, which) {
+    const chosen = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+    const term = which || chosen;
+    const days = TERM_DAYS[term];
+    const own = parseFloat(settings.bankApr);
+    if (own > 0 && term === chosen) return { term, days, apr: own, src: 'from your Settings' };
+    const base = br && br.rates && br.rates[term];
+    if (!base) return { term, days, apr: null };
+    const m = (br && br.merits) || 0;
+    return { term, days, apr: base * (1 + 0.05 * m), src: m ? `Torn's ${base.toFixed(2)}% plus your ${m} Bank Interest merit${m > 1 ? 's' : ''}` : "Torn's current rate" };
+  }
+  const interest = (amt, r) => (r.apr ? amt * (r.apr / 100) * (r.days / 365) : 0);
+
+  function bankState() {
+    const b = (userMem && userMem.bank) || store.get('bank', null);
+    if (!b) return null;

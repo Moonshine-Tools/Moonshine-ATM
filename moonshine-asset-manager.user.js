@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.4.0
+// @version      3.5.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.4.0';
+  const SCRIPT_VERSION = '3.5.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1512,6 +1512,40 @@
     if (breaking.length) return { legs: [breaking[0]], alts: breaking.slice(1, 4), mode: 'breaks', anyProfit };
     const all = opts.reduce((a, o) => a + o.owned * o.price * (1 - FEE), 0);
     return { error: `You asked for ${money(amount)}, but all your shares are worth about ${money(all)} after fees.` };
+  }
+
+  // Spread a big deposit over several stocks: the best outlooks first, at least
+  // enough stocks that none is over the "most in one stock" limit, and more as
+  // the money grows (about $1M+ per stock), topping up the smallest first.
+  const SPREAD_PER_STOCK = 1e6;
+  function planSpread(cash, an, user) {
+    if (!modelUsable(an)) return null;
+    const avail = cash - settings.keepOnHand;
+    const buf = 1 + settings.bufferPct / 100;
+    const L = liveStocks(an, user);
+    let total = cash; for (const x of Object.values(L)) total += x.owned * x.price;
+    const maxW = settings.maxWeightPct / 100;
+    const cands = Object.values(L)
+      .filter((x) => x.allowed && x.pred && x.pred.mean > 0 && !(settings.depositOwnedOnly && !x.owned))
+      .sort((a, b) => b.pred.mean - a.pred.mean);
+    const want = Math.max(Math.ceil(1 / maxW), Math.min(40, Math.floor(total / SPREAD_PER_STOCK)));
+    const chosen = cands.slice(0, Math.min(cands.length, want));
+    if (chosen.length < 2) return null;
+    const cap = maxW * total;
+    const cur = chosen.map((x) => x.owned * x.price);
+    const fill = (T) => chosen.reduce((a, x, i) => a + Math.max(0, Math.min(T, cap) - cur[i]), 0);
+    let T = cap;
+    if (fill(cap) > avail) { let lo = 0, hi = cap; for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (fill(m) > avail) hi = m; else lo = m; } T = lo; }
+    const legs = [];
+    chosen.forEach((x, i) => {
+      const amt = Math.max(0, Math.min(T, cap) - cur[i]);
+      const shares = Math.floor(amt / (x.price * buf));
+      if (shares < 1 || shares * x.price < 25000) return;
+      legs.push(Object.assign({}, x, { shares, amt: shares * x.price * buf }));
+    });
+    if (legs.length < 2) return null;
+    const spend = legs.reduce((a, o) => a + o.shares * o.price, 0);
+    return { legs, alts: [], mode: 'model', spread: true, avail, total, spend, left: avail - spend, good: cands.length };
   }
 
   function planDeposit(cash, an, user) {
@@ -2545,6 +2579,8 @@
           return showError(plan.error);
         }
         if (plan.noGood) return showNoGoodBuys(job, plan);
+        const spread = planSpread(cash, base, user);
+        if (spread && plan.avail > (settings.maxWeightPct / 100) * spread.total) return showSpread(job, spread, plan);
         return showQuick(job, plan, 0, 'buy');
       }
       if (job.action === 'rotate') return showRotation(job, base, user);
@@ -2963,6 +2999,23 @@
     }, 1500);
   }
 
+  function showSpread(job, plan, single) {
+    const s = openSheet(`
+      <h3>Spread ${money(plan.spend)} over ${plan.legs.length} stocks</h3>
+      <div class="tmm-sub">That's too much for one stock: it would put more than ${settings.maxWeightPct}% of your portfolio in it. Spreading it gives the trade ideas more stocks to see-saw between. These have the best outlook right now, and the smallest holdings get topped up first.</div>
+      <table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>Cost</th><th>Outlook</th></tr>
+        ${plan.legs.map((o) => `<tr><td>${esc(o.s.acr)}</td><td>${num(o.shares)}</td><td>${money(o.shares * o.price)}</td><td class="tmm-pos">${pct(o.pred.mean)}</td></tr>`).join('')}
+      </table>
+      ${plan.left > 1e6 ? `<div class="tmm-warn">${money(plan.left)} is left over: only ${plan.good} stock${plan.good === 1 ? '' : 's'} look${plan.good === 1 ? 's' : ''} good right now, and none goes over ${settings.maxWeightPct}%. Keep it for later${vaultAvailable() ? ' or put it in the faction vault' : ''}, or consider the City Bank (see Bank in the menu).</div>` : ''}
+      <div class="tmm-sub">Outlook is the model's expected ${hLabel(A ? A.h : 24)} return. Prices move, so share counts are rechecked at each purchase.</div>
+      <div class="tmm-row"><button class="tmm-act" id="tmm-sp-go">Start buying (${plan.legs.length} purchases)</button></div>
+      <div class="tmm-row"><button class="tmm-plain" id="tmm-sp-one">Buy one stock instead</button>${vaultAvailable() ? '<button class="tmm-plain" id="tmm-sp-vault">Faction vault instead</button>' : ''}<button class="tmm-plain" id="tmm-x">Close</button></div>`);
+    $('#tmm-x', s).onclick = closeSheet;
+    $('#tmm-sp-go', s).onclick = () => showQuick(job, plan, 0, 'buy');
+    $('#tmm-sp-one', s).onclick = () => showQuick(job, single, 0, 'buy');
+    const v = $('#tmm-sp-vault', s); if (v) v.onclick = () => startVaultDeposit(plan.avail);
+  }
+
   function showQuick(job, plan, legIdx, action) {
     const o = plan.legs[legIdx];
     const isSell = action === 'sell';
@@ -2988,13 +3041,13 @@
     const avgLine = !isSell && o.owned > 0 && o.cost
       ? `You own ${num(o.owned)} ${o.s.acr} at an average of $${o.cost.toFixed(2)}. Buying at $${o.price.toFixed(2)} ${o.price < o.cost ? 'lowers' : o.price > o.cost ? 'raises' : 'keeps'} that average${o.price !== o.cost ? ' a little' : ''}.`
       : null;
-    const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
+    const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.spread ? o.amt : plan.avail;
     showLeg({
       kind: plan.bank ? 'bank' : 'cash', cost: o.cost,
-      title: plan.bank ? `Move to the bank${legTag}` : isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
+      title: plan.bank ? `Move to the bank${legTag}` : plan.spread ? `Spread ${money(plan.spend)} (purchase ${legIdx + 1} of ${plan.legs.length})` : isSell ? `Withdraw ${money(job.amount)}${legTag}` : `Deposit ${money(plan.avail)}`,
       action, stock: o.s, shares: o.shares, price: o.price,
       lines: [
-        isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
+        isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : plan.spread ? `At about $${o.price.toFixed(2)}, this uses about ${money(value)} of the ${money(plan.spend)} you're spreading.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
         plan.bank ? `Part of your bank move: ${money(job.amount)} in total across ${plan.legs.length} sale${plan.legs.length > 1 ? 's' : ''}.` : quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
         ...(profitLine ? [profitLine] : []),
         ...(avgLine ? [avgLine] : []),
@@ -3011,6 +3064,13 @@
         : Math.floor(target / (p * buf)),
       extras: !isSell && vaultAvailable() ? [{ label: 'Vault instead', long: `Deposit ${money(plan.avail)} to the faction vault instead`, fn: () => startVaultDeposit(plan.avail) }] : null,
       onDone: async (cash, status) => {
+        if (plan.spread && legIdx + 1 < plan.legs.length) {
+          const b = document.createElement('button');
+          b.className = 'tmm-act'; b.textContent = `Next purchase (${plan.legs[legIdx + 1].s.acr})`;
+          b.onclick = () => showQuick(job, plan, legIdx + 1, action);
+          status.after(b);
+          return true;
+        }
         if (!isSell) return leftoverNext(job, cash);
         if (isSell && legIdx + 1 < plan.legs.length) {
           const b = document.createElement('button');

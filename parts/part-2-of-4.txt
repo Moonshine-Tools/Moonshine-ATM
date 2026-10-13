@@ -1,27 +1,3 @@
-      const m = j.merits || {};
-      merits = Number(m['Bank Interest'] ?? m.bank_interest ?? m.bankInterest) || 0;
-    } catch (e) { /* keep the last known value */ }
-    const out = { t: Date.now(), rates: rates || (c && c.rates) || null, merits };
-    if (out.rates) store.set('bankRates', out);
-    return out;
-  }
-
-  function termRate(br, which) {
-    const chosen = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
-    const term = which || chosen;
-    const days = TERM_DAYS[term];
-    const own = parseFloat(settings.bankApr);
-    if (own > 0 && term === chosen) return { term, days, apr: own, src: 'from your Settings' };
-    const base = br && br.rates && br.rates[term];
-    if (!base) return { term, days, apr: null };
-    const m = (br && br.merits) || 0;
-    return { term, days, apr: base * (1 + 0.05 * m), src: m ? `Torn's ${base.toFixed(2)}% plus your ${m} Bank Interest merit${m > 1 ? 's' : ''}` : "Torn's current rate" };
-  }
-  const interest = (amt, r) => (r.apr ? amt * (r.apr / 100) * (r.days / 365) : 0);
-
-  function bankState() {
-    const b = (userMem && userMem.bank) || store.get('bank', null);
-    if (!b) return null;
     if (!(b.amount > 0)) return { state: 'none', amount: 0 };
     if (b.endsAt > Date.now()) return { state: 'active', amount: b.amount, endsAt: b.endsAt };
     return { state: 'ended', amount: b.amount };
@@ -607,6 +583,40 @@
     return { error: `You asked for ${money(amount)}, but all your shares are worth about ${money(all)} after fees.` };
   }
 
+  // Spread a big deposit over several stocks: the best outlooks first, at least
+  // enough stocks that none is over the "most in one stock" limit, and more as
+  // the money grows (about $1M+ per stock), topping up the smallest first.
+  const SPREAD_PER_STOCK = 1e6;
+  function planSpread(cash, an, user) {
+    if (!modelUsable(an)) return null;
+    const avail = cash - settings.keepOnHand;
+    const buf = 1 + settings.bufferPct / 100;
+    const L = liveStocks(an, user);
+    let total = cash; for (const x of Object.values(L)) total += x.owned * x.price;
+    const maxW = settings.maxWeightPct / 100;
+    const cands = Object.values(L)
+      .filter((x) => x.allowed && x.pred && x.pred.mean > 0 && !(settings.depositOwnedOnly && !x.owned))
+      .sort((a, b) => b.pred.mean - a.pred.mean);
+    const want = Math.max(Math.ceil(1 / maxW), Math.min(40, Math.floor(total / SPREAD_PER_STOCK)));
+    const chosen = cands.slice(0, Math.min(cands.length, want));
+    if (chosen.length < 2) return null;
+    const cap = maxW * total;
+    const cur = chosen.map((x) => x.owned * x.price);
+    const fill = (T) => chosen.reduce((a, x, i) => a + Math.max(0, Math.min(T, cap) - cur[i]), 0);
+    let T = cap;
+    if (fill(cap) > avail) { let lo = 0, hi = cap; for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (fill(m) > avail) hi = m; else lo = m; } T = lo; }
+    const legs = [];
+    chosen.forEach((x, i) => {
+      const amt = Math.max(0, Math.min(T, cap) - cur[i]);
+      const shares = Math.floor(amt / (x.price * buf));
+      if (shares < 1 || shares * x.price < 25000) return;
+      legs.push(Object.assign({}, x, { shares, amt: shares * x.price * buf }));
+    });
+    if (legs.length < 2) return null;
+    const spend = legs.reduce((a, o) => a + o.shares * o.price, 0);
+    return { legs, alts: [], mode: 'model', spread: true, avail, total, spend, left: avail - spend, good: cands.length };
+  }
+
   function planDeposit(cash, an, user) {
     const avail = cash - settings.keepOnHand;
     if (avail <= 0) return { error: `Nothing to deposit. You have ${money(cash)} on hand and keep ${money(settings.keepOnHand)}.` };
@@ -801,3 +811,10 @@
     moon.addEventListener('pointerup', (e) => {
       if (!drag) return;
       const moved = drag.moved;
+      drag = null;
+      moon.classList.remove('dragging');
+      if (moved) snapMoon(e.clientX, e.clientY);
+      else if (menu.hidden) showMenu(); else hideMenu();
+    });
+    moon.addEventListener('pointercancel', () => { if (drag && drag.moved) placeMoon(); drag = null; moon.classList.remove('dragging'); });
+    moon.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (menu.hidden) showMenu(); else hideMenu(); } });

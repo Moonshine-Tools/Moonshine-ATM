@@ -46,6 +46,7 @@ Type how much cash you need, like `5m`, `750k` or `1.2b`. The script picks which
 ### 🏦 Quick deposit
 One tap reads the cash you're carrying and buys as many whole shares as it covers of the stock with the best outlook. Extra weight goes to purchases that complete a benefit block.
 
+- **Big deposits get spread out.** If your cash is too much for one stock (it would put more than 20% of your portfolio in it), Deposit offers to spread it over several stocks with the best outlook: at least 5, and more as the amount grows, about $1M+ each. It tops up your smallest holdings first, shows the plan, and walks you through each purchase. Handy for a new investor, a donator pack sale or a lottery win.
 - **Only good buys.** If no stock is expected to rise, it says *No good buys right now* and suggests the faction vault instead of buying into a falling stock.
 - **Leftover cash.** After a purchase, if there's enough left for more shares of a good buy, it offers to buy them. Otherwise it offers the faction vault, or the church for small amounts.
 - **Faction vault.** Deposit to your faction's vault in one tap. The script opens Faction → Armory (the revolver tab) and fills in the money box; you tap **Deposit Money**. Only shown if you're in a faction, and not while you're in hospital, jail or traveling.
@@ -176,7 +177,7 @@ Moonshine is your **wallet**, not your savings account.
 **Test results:** on 229 days of price history it had never seen, following the trade ideas returned about +12% (+11% more than just holding). That's roughly 3% every two months. It's a nice extra on spare cash, but it doesn't replace a bank investment.
 
 ### How many stocks
-- **Aim for 5–8 different stocks.** The script earns by moving money from stocks that are high to ones that are low, so it needs several to move between. Past about 8, each holding gets too small to trade.
+- **At least 5 stocks, and more is fine.** The script earns by moving money from stocks that are high to ones that are low, so the more it can move between, the better. What matters is that each holding is big enough to trade: about $1M or more. Fifteen stocks at $1M each is great; ten at $50k each is too thin.
 - **You don't need to pick them.** Deposit chooses the best-placed stock each time, so the spread builds itself.
 - **Keep some shares above your benefit blocks.** The script never sells shares that hold a benefit block. If everything you own sits exactly on a block, it has nothing to trade.
 
