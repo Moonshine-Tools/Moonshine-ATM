@@ -1,3 +1,4 @@
+      ${f('s-ex', 'Never trade these stocks', settings.exclude, 'e.g. WSU, TCB')}
       ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
       ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
       ${c('s-vault', 'Offer faction vault deposits (only shown if you are in a faction)', settings.factionVault)}

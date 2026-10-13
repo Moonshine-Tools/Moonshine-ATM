@@ -1,3 +1,5 @@
+  #tmm-root .tmm-chip{background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:7px 12px;font-size:14px;cursor:pointer}
+  #tmm-root .tmm-input{width:100%;font-size:20px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink)}
   #tmm-root .tmm-act{background:var(--brass);color:var(--onbrass);border:0;border-radius:8px;padding:11px 16px;font-weight:700;font-size:15px;line-height:1;cursor:pointer}
   #tmm-root .tmm-plain{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer}
   #tmm-root .tmm-tabs{display:flex;gap:4px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
@@ -534,4 +536,3 @@
       <h4>Cash</h4>
       ${f('s-keep', 'Keep this much cash on hand after a deposit', short(settings.keepOnHand))}
       ${f('s-park', 'Parking stock (used while the model is learning)', settings.parkStock, 'e.g. TCI')}
-      ${f('s-ex', 'Never trade these stocks', settings.exclude, 'e.g. WSU, TCB')}

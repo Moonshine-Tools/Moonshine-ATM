@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.0.0
+// @version      3.0.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -532,8 +532,13 @@
         r.smooth = nb.reduce((s, q) => s + q.vsBH, 0) / nb.length;
       }
       const best = rows.reduce((x, y) => (y.smooth > x.smooth ? y : x));
+      const bestRaw = rows.reduce((x, y) => (y.vsBH > x.vsBH ? y : x));
       const margin = Math.max(0.002, Math.abs(best.smooth) * 0.1);
-      const near = rows.filter((r) => r.smooth >= best.smooth - margin);
+      const marginRaw = Math.max(0.005, Math.abs(bestRaw.vsBH) * 0.1);
+      // A suggestion must look good both with its neighbours AND on its own,
+      // so a weak setting can't borrow credit from a strong one next to it.
+      let near = rows.filter((r) => r.smooth >= best.smooth - margin && r.vsBH >= bestRaw.vsBH - marginRaw);
+      if (!near.length) near = [bestRaw];
       const rec = near.sort((x, y) => (y.minEdge - x.minEdge) || (y.tMin - x.tMin))[0];
       return { h, sig: spec && spec.kind === 'ens' ? spec.inputs.map((x) => x.key + x.h).join(',') : 'base', testDays: Math.round((b - tCut) / 86400), bh, rows, best, rec, at: Date.now() };
     }
@@ -620,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.0.0';
+  const SCRIPT_VERSION = '3.0.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);

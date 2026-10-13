@@ -1,3 +1,9 @@
+    $('#tmm-x', s).onclick = closeSheet;
+  }
+
+  // =====================================================================
+  //  DATABASE (IndexedDB, on your phone)
+  // =====================================================================
   const DB = (() => {
     let dbp = null;
     function open() {
@@ -751,5 +757,3 @@
   #tmm-root .tmm-warn{color:var(--warn);font-weight:600;margin:6px 0} #tmm-root .tmm-err{color:var(--neg);font-weight:600;margin:6px 0} #tmm-root .tmm-ok{color:var(--pos);font-weight:600;margin:6px 0}
   #tmm-root .tmm-status{margin:10px 0;padding:10px;border-left:3px solid var(--brass);background:var(--bg2);color:var(--ink)}
   #tmm-root .tmm-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
-  #tmm-root .tmm-chip{background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:7px 12px;font-size:14px;cursor:pointer}
-  #tmm-root .tmm-input{width:100%;font-size:20px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink)}
