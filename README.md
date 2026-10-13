@@ -183,6 +183,8 @@ Small edges add up over weeks, not days. Check **Market → Details** for the sc
 | Smallest trade | $250k | Trades smaller than this aren't suggested |
 | Days of history | 730 | How far back to download prices |
 
+**Not sure what to set?** Market → Details → **Best trade settings** replays recent history the model never trained on with different *minimum gain* and *evidence* settings, compares each with buy-and-hold, and suggests one. Tap **Use these settings** to apply it. Re-test every week or two.
+
 ---
 
 ## Rules and privacy

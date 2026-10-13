@@ -1,11 +1,3 @@
-  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
-  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
-  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
-  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
-
-  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
-    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
     <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
     <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
 
@@ -390,6 +382,50 @@
     }
   }
 
+  // Threshold tuner panel (Market → Details).
+  async function renderTuner(box, an) {
+    const fmtE = (x) => (x * 100).toFixed(x < 0.01 ? 2 : 1).replace(/0$/, '') + '%';
+    const fmtT = (x) => (x ? x + '×' : 'any');
+    const draw = (r) => {
+      if (!r) { box.innerHTML = `<div class="tmm-sub">Not enough price history to test settings yet.</div>`; return; }
+      const curE = settings.minEdgePct / 100, curT = settings.evidenceT;
+      const rows = r.rows.slice().sort((x, y) => y.vsBH - x.vsBH);
+      const isCur = (x) => Math.abs(x.minEdge - curE) < 1e-9 && Math.abs(x.tMin - curT) < 1e-9;
+      const isRec = (x) => x.minEdge === r.rec.minEdge && x.tMin === r.rec.tMin;
+      box.innerHTML = `
+        <div class="tmm-sub">Replayed the last ${r.testDays} days, which the model never trained on, using the ${hLabel(r.h)} horizon. Buy-and-hold made ${pctPlain(r.bh.ret)}. Tested ${new Date(r.at).toLocaleString()}.</div>
+        ${!an.validated ? `<div class="tmm-card"><div class="tmm-warn">The model hasn't passed its self-test, so these results are mostly luck. No setting is suggested until it does.</div><div class="tmm-row"><button class="tmm-plain" id="tmm-tune-run">Test again</button></div></div>` : `
+        <div class="tmm-card"><b>Suggested: minimum gain ${fmtE(r.rec.minEdge)}, evidence ${fmtT(r.rec.tMin)}</b>
+          <div class="tmm-sub">${pctPlain(r.rec.vsBH, 2)} vs buy-and-hold over that period, ${r.rec.trades} trades. ${r.rec.minEdge === r.best.minEdge && r.rec.tMin === r.best.tMin ? 'This was the best setting.' : `The very best (${fmtE(r.best.minEdge)}, ${fmtT(r.best.tMin)}) was only slightly ahead, so this picks the more cautious one: the best result on past data is partly luck.`}</div>
+          <div class="tmm-row">${isCur(r.rec) ? '<span class="tmm-ok">You\'re already using this.</span>' : '<button class="tmm-act" id="tmm-tune-use">Use these settings</button>'}<button class="tmm-plain" id="tmm-tune-run">Test again</button></div></div>`}
+        <div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Min gain</th><th>Evidence</th><th>vs hold</th><th>Trades</th><th>Worst drop</th></tr>
+        ${rows.map((x) => `<tr${isRec(x) || isCur(x) ? ' style="font-weight:700"' : ''}><td>${fmtE(x.minEdge)}${isRec(x) ? ' ★' : ''}${isCur(x) ? ' (now)' : ''}</td><td>${fmtT(x.tMin)}</td><td class="${x.vsBH >= 0 ? 'tmm-pos' : 'tmm-neg'}">${pctPlain(x.vsBH, 2)}</td><td>${x.trades}</td><td>${pctPlain(-x.maxDD)}</td></tr>`).join('')}
+        </table></div>
+        <div class="tmm-sub">★ suggested · (now) your current settings. Past results don't guarantee future ones; re-test every week or two.</div>`;
+      const use = $('#tmm-tune-use', box);
+      if (use) use.onclick = () => {
+        settings.minEdgePct = +(r.rec.minEdge * 100).toFixed(3);
+        settings.evidenceT = r.rec.tMin;
+        saveSettings(); if (A) A.dirty = true; updateBadges();
+        draw(r);
+      };
+      $('#tmm-tune-run', box).onclick = () => run();
+    };
+    const run = async () => {
+      box.innerHTML = `<div class="tmm-sub">Testing ${6 * 4} combinations on past data… this can take a few seconds.</div>`;
+      await sleep(50);
+      const r = Core.tune(an.S, an.h || 24);
+      await DB.setMeta('tune', r);
+      draw(r);
+    };
+    const cached = await DB.meta('tune', null);
+    if (cached && Date.now() - cached.at < 3 * 86400000 && cached.h === (an.h || 24)) draw(cached);
+    else {
+      box.innerHTML = `<div class="tmm-sub">Find out which minimum gain and evidence settings would have earned the most on data the model hadn't seen.</div><div class="tmm-row"><button class="tmm-act" id="tmm-tune-run">Run the tuner</button></div>`;
+      $('#tmm-tune-run', box).onclick = run;
+    }
+  }
+
   async function renderDetails(body, an, user) {
     const v = an.val;
     let html = '';
@@ -405,6 +441,7 @@
           <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 2). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 2/3).</div></div>`;
       }
     }
+    html += `<h4>Best trade settings (threshold tuner)</h4><div id="tmm-tune"></div>`;
     html += `<h4>Your hypotheses, tested</h4>`;
     html += an.hyp ? `<ul class="tmm-why">${an.hyp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div class="tmm-sub">Not enough data yet.</div>';
     if (an.regime) html += `<div class="tmm-sub">Market right now: ${esc(an.regime.label)} (volatility at the ${ordinal(Math.round(an.regime.pct * 100))} percentile).</div>`;
@@ -432,6 +469,7 @@
     html += `<h4>Data on this phone</h4><div class="tmm-sub">${num(an.hours)} hourly prices across ${an.nStocks} stocks${Number.isFinite(an.oldest) ? `, back to ${new Date(an.oldest * 1000).toLocaleDateString()}` : ''}. ${num(minN)} minute snapshots (kept 90 days). ${esc(sync.status)}</div>
       <div class="tmm-row"><button class="tmm-plain" id="tmm-rerun">Re-run analysis</button><button class="tmm-plain" id="tmm-sync">Download history now</button></div>`;
     body.innerHTML = html;
+    renderTuner($('#tmm-tune', body), an);
     $('#tmm-rerun', body).onclick = async () => { body.innerHTML = '<div class="tmm-sub">Analyzing…</div>'; await DB.setMeta('validation', null); await analyze(true); showMarket('details'); };
     $('#tmm-sync', body).onclick = () => { syncHistory(true).then(() => analyze(true)); $('#tmm-sync', body).textContent = 'Downloading… keep Torn open'; };
   }
@@ -490,32 +528,3 @@
       settings.depositOwnedOnly = $('#s-own', body).checked;
       settings.factionVault = $('#s-vault', body).checked;
       const cm = parseAmount(g('s-church')); settings.churchMax = cm >= 0 ? cm : DEFAULTS.churchMax;
-      settings.minEdgePct = n('s-edge', DEFAULTS.minEdgePct, 0, 50);
-      settings.evidenceT = n('s-t', DEFAULTS.evidenceT, 0, 10);
-      settings.maxWeightPct = n('s-maxw', DEFAULTS.maxWeightPct, 5, 100);
-      const mt = parseAmount(g('s-mint')); settings.minTrade = mt >= 0 ? mt : DEFAULTS.minTrade;
-      settings.showUnvalidated = $('#s-unval', body).checked;
-      settings.historyDays = Math.round(n('s-days', DEFAULTS.historyDays, 30, 3650));
-      settings.autoOpen = $('#s-open', body).checked;
-      saveSettings();
-      if (A) A.dirty = true;
-      showMarket('overview');
-    };
-  }
-
-  // ------------------------------------------------------------ badges
-  // Orange dot: you're carrying cash. Green dot: there's a trade recommendation.
-  function cashNow() { const c = domCash(); return c != null ? c : userMem ? userMem.cash : null; }
-  function updateCashBadge() {
-    if (!moon) return;
-    const cash = cashNow();
-    const has = cash != null && cash > settings.keepOnHand + 1000;
-    moon.classList.toggle('has-cash', has);
-    const note = $('[data-note="cash"]', root);
-    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
-    moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
-  }
-  async function updateBadges() {
-    try {
-      if (!apiKey()) return;
-      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }

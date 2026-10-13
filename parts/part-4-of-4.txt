@@ -1,3 +1,32 @@
+      settings.minEdgePct = n('s-edge', DEFAULTS.minEdgePct, 0, 50);
+      settings.evidenceT = n('s-t', DEFAULTS.evidenceT, 0, 10);
+      settings.maxWeightPct = n('s-maxw', DEFAULTS.maxWeightPct, 5, 100);
+      const mt = parseAmount(g('s-mint')); settings.minTrade = mt >= 0 ? mt : DEFAULTS.minTrade;
+      settings.showUnvalidated = $('#s-unval', body).checked;
+      settings.historyDays = Math.round(n('s-days', DEFAULTS.historyDays, 30, 3650));
+      settings.autoOpen = $('#s-open', body).checked;
+      saveSettings();
+      if (A) A.dirty = true;
+      showMarket('overview');
+    };
+  }
+
+  // ------------------------------------------------------------ badges
+  // Orange dot: you're carrying cash. Green dot: there's a trade recommendation.
+  function cashNow() { const c = domCash(); return c != null ? c : userMem ? userMem.cash : null; }
+  function updateCashBadge() {
+    if (!moon) return;
+    const cash = cashNow();
+    const has = cash != null && cash > settings.keepOnHand + 1000;
+    moon.classList.toggle('has-cash', has);
+    const note = $('[data-note="cash"]', root);
+    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
+    moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+  }
+  async function updateBadges() {
+    try {
+      if (!apiKey()) return;
+      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
       updateCashBadge();
       if (!userMem) return;
       const an = await analyze();

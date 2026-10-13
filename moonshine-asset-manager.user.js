@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.8.0
+// @version      2.9.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -205,7 +205,8 @@
     // Portfolio backtest from tStart to tEnd, daily decisions, fees on every sale.
     // strategy: 'bh' | 'mom' | 'mr' | 'model'
     function backtest(S, model, o) {
-      const { strategy, tStart, tEnd, K = 5, minEdge = 0.0025, h = 24 } = o;
+      const { strategy, tStart, tEnd, K = 5, minEdge = 0.0025, h = 24, tMin = -Infinity } = o;
+      const ses = {};
       const step = Math.min(h, 24) * HOUR;
       const sids = Object.keys(S);
       const price = (sid, t) => { const s = S[sid]; let i = idxAt(s, t); if (i < 0) i = t < s.t0 ? -1 : s.n - 1; return i < 0 ? NaN : Math.exp(s.lp[i]); };
@@ -214,7 +215,7 @@
         const s = S[sid], i = idxAt(s, t);
         if (strategy === 'mom') return s.lp[i] - s.lp[i - SPAN];
         if (strategy === 'mr') return -(s.lp[i] - s.lp[i - SPAN]);
-        if (strategy === 'model') { const p = predict(model, sid, s.z[i], h); return p ? p.mean : NaN; }
+        if (strategy === 'model') { const p = predict(model, sid, s.z[i], h); if (p) ses[sid] = p.se; return p ? p.mean : NaN; }
         return 0;
       };
       let units = {}, fees = 0, trades = 0, peak = 1, maxDD = 0, value = 1;
@@ -239,6 +240,10 @@
           if (!cand) break;
           const edge = strategy === 'model' ? sc[cand] - sc[sid] : Infinity;
           if (edge <= FEE + minEdge) continue;
+          if (strategy === 'model' && tMin > -Infinity) {
+            const se = Math.sqrt((ses[sid] || 0) ** 2 + (ses[cand] || 0) ** 2) || 1e-9;
+            if ((edge - FEE) / se <= tMin) continue;
+          }
           const v = units[sid] * price(sid, t);
           fees += v * FEE; trades++;
           delete units[sid];
@@ -279,6 +284,38 @@
       res.reason = res.ok ? '' : 'The model did not beat buy-and-hold reliably on data it had not seen.';
       res.ver = VAL_VER;
       return res;
+    }
+
+    // Threshold tuner: replay the out-of-sample period under different
+    // "minimum gain" and "evidence" settings and compare with buy-and-hold.
+    // Recommends the most cautious setting that's within a whisker of the
+    // best, because the very best result on past data is partly luck.
+    const TUNE_EDGES = [0.001, 0.0015, 0.0025, 0.0035, 0.005, 0.01];
+    const TUNE_TS = [0, 0.8, 1.2, 2];
+    function tune(S, h = 24) {
+      const [a, b] = range(S);
+      if ((b - a) / HOUR < WARMUP + 24 * 60) return null;
+      const tCut = a + Math.floor(((b - a) * 0.7) / HOUR) * HOUR;
+      const model = fit(S, [h], tCut);
+      if (!model) return null;
+      const bh = backtest(S, model, { strategy: 'bh', tStart: tCut, tEnd: b, h });
+      if (!bh) return null;
+      const rows = [];
+      TUNE_EDGES.forEach((me, ei) => TUNE_TS.forEach((tm, ti) => {
+        const r = backtest(S, model, { strategy: 'model', tStart: tCut, tEnd: b, h, minEdge: me, tMin: tm });
+        if (r) rows.push({ ei, ti, minEdge: me, tMin: tm, ret: r.ret, maxDD: r.maxDD, trades: r.trades, fees: r.fees, vsBH: (1 + r.ret) / (1 + bh.ret) - 1 });
+      }));
+      if (!rows.length) return null;
+      // Judge each setting together with its neighbours, so one lucky result can't win.
+      for (const r of rows) {
+        const nb = rows.filter((q) => Math.abs(q.ei - r.ei) <= 1 && Math.abs(q.ti - r.ti) <= 1);
+        r.smooth = nb.reduce((s, q) => s + q.vsBH, 0) / nb.length;
+      }
+      const best = rows.reduce((x, y) => (y.smooth > x.smooth ? y : x));
+      const margin = Math.max(0.002, Math.abs(best.smooth) * 0.1);
+      const near = rows.filter((r) => r.smooth >= best.smooth - margin);
+      const rec = near.sort((x, y) => (y.minEdge - x.minEdge) || (y.tMin - x.tMin))[0];
+      return { h, testDays: Math.round((b - tCut) / 86400), bh, rows, best, rec, at: Date.now() };
     }
 
     // Market regime: current average volatility vs its own history.
@@ -345,7 +382,7 @@
       return best;
     }
 
-    return { VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
+    return { VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, tune, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
   })();
 
   if (typeof window === 'undefined') { if (typeof module !== 'undefined') module.exports = Core; return; }
@@ -363,7 +400,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.8.0';
+  const SCRIPT_VERSION = '2.9.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1699,6 +1736,50 @@
     }
   }
 
+  // Threshold tuner panel (Market → Details).
+  async function renderTuner(box, an) {
+    const fmtE = (x) => (x * 100).toFixed(x < 0.01 ? 2 : 1).replace(/0$/, '') + '%';
+    const fmtT = (x) => (x ? x + '×' : 'any');
+    const draw = (r) => {
+      if (!r) { box.innerHTML = `<div class="tmm-sub">Not enough price history to test settings yet.</div>`; return; }
+      const curE = settings.minEdgePct / 100, curT = settings.evidenceT;
+      const rows = r.rows.slice().sort((x, y) => y.vsBH - x.vsBH);
+      const isCur = (x) => Math.abs(x.minEdge - curE) < 1e-9 && Math.abs(x.tMin - curT) < 1e-9;
+      const isRec = (x) => x.minEdge === r.rec.minEdge && x.tMin === r.rec.tMin;
+      box.innerHTML = `
+        <div class="tmm-sub">Replayed the last ${r.testDays} days, which the model never trained on, using the ${hLabel(r.h)} horizon. Buy-and-hold made ${pctPlain(r.bh.ret)}. Tested ${new Date(r.at).toLocaleString()}.</div>
+        ${!an.validated ? `<div class="tmm-card"><div class="tmm-warn">The model hasn't passed its self-test, so these results are mostly luck. No setting is suggested until it does.</div><div class="tmm-row"><button class="tmm-plain" id="tmm-tune-run">Test again</button></div></div>` : `
+        <div class="tmm-card"><b>Suggested: minimum gain ${fmtE(r.rec.minEdge)}, evidence ${fmtT(r.rec.tMin)}</b>
+          <div class="tmm-sub">${pctPlain(r.rec.vsBH, 2)} vs buy-and-hold over that period, ${r.rec.trades} trades. ${r.rec.minEdge === r.best.minEdge && r.rec.tMin === r.best.tMin ? 'This was the best setting.' : `The very best (${fmtE(r.best.minEdge)}, ${fmtT(r.best.tMin)}) was only slightly ahead, so this picks the more cautious one: the best result on past data is partly luck.`}</div>
+          <div class="tmm-row">${isCur(r.rec) ? '<span class="tmm-ok">You\'re already using this.</span>' : '<button class="tmm-act" id="tmm-tune-use">Use these settings</button>'}<button class="tmm-plain" id="tmm-tune-run">Test again</button></div></div>`}
+        <div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Min gain</th><th>Evidence</th><th>vs hold</th><th>Trades</th><th>Worst drop</th></tr>
+        ${rows.map((x) => `<tr${isRec(x) || isCur(x) ? ' style="font-weight:700"' : ''}><td>${fmtE(x.minEdge)}${isRec(x) ? ' ★' : ''}${isCur(x) ? ' (now)' : ''}</td><td>${fmtT(x.tMin)}</td><td class="${x.vsBH >= 0 ? 'tmm-pos' : 'tmm-neg'}">${pctPlain(x.vsBH, 2)}</td><td>${x.trades}</td><td>${pctPlain(-x.maxDD)}</td></tr>`).join('')}
+        </table></div>
+        <div class="tmm-sub">★ suggested · (now) your current settings. Past results don't guarantee future ones; re-test every week or two.</div>`;
+      const use = $('#tmm-tune-use', box);
+      if (use) use.onclick = () => {
+        settings.minEdgePct = +(r.rec.minEdge * 100).toFixed(3);
+        settings.evidenceT = r.rec.tMin;
+        saveSettings(); if (A) A.dirty = true; updateBadges();
+        draw(r);
+      };
+      $('#tmm-tune-run', box).onclick = () => run();
+    };
+    const run = async () => {
+      box.innerHTML = `<div class="tmm-sub">Testing ${6 * 4} combinations on past data… this can take a few seconds.</div>`;
+      await sleep(50);
+      const r = Core.tune(an.S, an.h || 24);
+      await DB.setMeta('tune', r);
+      draw(r);
+    };
+    const cached = await DB.meta('tune', null);
+    if (cached && Date.now() - cached.at < 3 * 86400000 && cached.h === (an.h || 24)) draw(cached);
+    else {
+      box.innerHTML = `<div class="tmm-sub">Find out which minimum gain and evidence settings would have earned the most on data the model hadn't seen.</div><div class="tmm-row"><button class="tmm-act" id="tmm-tune-run">Run the tuner</button></div>`;
+      $('#tmm-tune-run', box).onclick = run;
+    }
+  }
+
   async function renderDetails(body, an, user) {
     const v = an.val;
     let html = '';
@@ -1714,6 +1795,7 @@
           <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 2). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 2/3).</div></div>`;
       }
     }
+    html += `<h4>Best trade settings (threshold tuner)</h4><div id="tmm-tune"></div>`;
     html += `<h4>Your hypotheses, tested</h4>`;
     html += an.hyp ? `<ul class="tmm-why">${an.hyp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div class="tmm-sub">Not enough data yet.</div>';
     if (an.regime) html += `<div class="tmm-sub">Market right now: ${esc(an.regime.label)} (volatility at the ${ordinal(Math.round(an.regime.pct * 100))} percentile).</div>`;
@@ -1741,6 +1823,7 @@
     html += `<h4>Data on this phone</h4><div class="tmm-sub">${num(an.hours)} hourly prices across ${an.nStocks} stocks${Number.isFinite(an.oldest) ? `, back to ${new Date(an.oldest * 1000).toLocaleDateString()}` : ''}. ${num(minN)} minute snapshots (kept 90 days). ${esc(sync.status)}</div>
       <div class="tmm-row"><button class="tmm-plain" id="tmm-rerun">Re-run analysis</button><button class="tmm-plain" id="tmm-sync">Download history now</button></div>`;
     body.innerHTML = html;
+    renderTuner($('#tmm-tune', body), an);
     $('#tmm-rerun', body).onclick = async () => { body.innerHTML = '<div class="tmm-sub">Analyzing…</div>'; await DB.setMeta('validation', null); await analyze(true); showMarket('details'); };
     $('#tmm-sync', body).onclick = () => { syncHistory(true).then(() => analyze(true)); $('#tmm-sync', body).textContent = 'Downloading… keep Torn open'; };
   }
