@@ -655,7 +655,8 @@
       }
     }
     const days = (now - Math.max(from, firstSeen)) / 86400000;
-    const rec = Math.max(KEEP_MIN, Math.ceil((used * 1.5) / 1e6) * 1e6);
+    // $5M always stays for see-sawing, plus the most you've drawn, rounded up to the next $1M.
+    const rec = Math.ceil((KEEP_MIN + used) / 1e6) * 1e6;
     // Growth of your stocks from price changes over the last week and 2 months.
     const growth = [];
     if (an && an.S) {

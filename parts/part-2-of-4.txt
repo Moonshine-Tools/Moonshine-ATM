@@ -1,4 +1,3 @@
-      if (!Object.keys(rates).length) rates = null;
     } catch (e) { /* rate unknown; the advisor asks for it */ }
     try {
       const j = await api('user/?selections=merits');

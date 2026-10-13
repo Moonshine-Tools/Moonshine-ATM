@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.3.0
+// @version      3.3.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.3.0';
+  const SCRIPT_VERSION = '3.3.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -2357,7 +2357,8 @@
       }
     }
     const days = (now - Math.max(from, firstSeen)) / 86400000;
-    const rec = Math.max(KEEP_MIN, Math.ceil((used * 1.5) / 1e6) * 1e6);
+    // $5M always stays for see-sawing, plus the most you've drawn, rounded up to the next $1M.
+    const rec = Math.ceil((KEEP_MIN + used) / 1e6) * 1e6;
     // Growth of your stocks from price changes over the last week and 2 months.
     const growth = [];
     if (an && an.S) {
@@ -2384,7 +2385,7 @@
     let advice;
     if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
     else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
-    else advice = `<div class="tmm-sub">You've drawn at most <b>${money(W.used)}</b> of the ${money(keep)} you keep in stocks. ${W.rec > keep ? 'Raise' : 'Lower'} it to <b>${money(W.rec)}</b>${W.rec > keep ? ' so you have room to spare' : ' and move the rest to the bank'}.</div>
+    else advice = `<div class="tmm-sub">You've drawn at most <b>${money(W.used)}</b> of the ${money(keep)} you keep in stocks. ${W.rec > keep ? 'Raise' : 'Lower'} it to <b>${money(W.rec)}</b>${W.rec > keep ? ' so you have room to spare' : ' and move the rest to the bank'}: ${money(KEEP_MIN)} for trading plus what you use.</div>
         <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
     return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
       <table class="tmm-tbl">
@@ -2396,7 +2397,7 @@
       </table>
       ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
       ${advice}
-      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is 1.5× the most you've drawn, and never under ${money(KEEP_MIN)}.</div></div>`;
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus the most you've drawn, rounded up to the next $1M.</div></div>`;
   }
 
   async function showAdvisor() {
