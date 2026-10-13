@@ -1,3 +1,4 @@
+          : `You've drawn up to <b>${money(W.used)}</b> at once.`} ${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need) ? '' : `With ${money(KEEP_MIN)} for trading, `}${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
         <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
     return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
       <table class="tmm-tbl">

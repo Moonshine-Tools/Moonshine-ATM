@@ -1,4 +1,6 @@
-# 🌙 Moonshine Asset Manager
+# 🌙 Moonshine ATM
+
+*Formerly Moonshine Asset Manager. If you installed it from the old link, delete it in Manage scripts and add it again from the link below. Your settings and price history are kept.*
 
 **An all-in-one stock market tool for Torn City, built for Torn PDA.**
 
@@ -127,7 +129,7 @@ Every recommendation is logged. Once its time horizon has passed, the script che
 1. In Torn PDA, open the menu → **Settings → Advanced Browser Settings → Manage scripts** and make sure custom user scripts are on.
 2. Tap **+**, choose the **Remote** tab and paste this link:
    ```
-   https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js
+   https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-ATM/main/moonshine-atm.user.js
    ```
    Remote install also gets you update notices from Torn PDA.
    - Or paste the code in directly. If your phone can't copy it all at once, use the four files in `parts/`, pasting them one after another in order.
@@ -137,7 +139,7 @@ Every recommendation is logged. Once its time horizon has passed, the script che
 Your API key is filled in automatically by Torn PDA.
 
 ### PC (Tampermonkey / Violentmonkey)
-Open [this link](https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js) and Tampermonkey will offer to install it. Then open **Market → Settings** and paste a **Limited Access** API key.
+Open [this link](https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-ATM/main/moonshine-atm.user.js) and Tampermonkey will offer to install it. Then open **Market → Settings** and paste a **Limited Access** API key.
 
 ### Updates
 The script checks GitHub for a newer version every 6 hours. When one is out, the Market panel shows **Update available**, and the menu shows *(update)* next to Market. You can also check any time in **Market → Settings → Check for updates**. Your settings and price history are kept when you update.
@@ -145,7 +147,7 @@ The script checks GitHub for a newer version every 6 hours. When one is out, the
 **Installing the update in Torn PDA:**
 1. Menu → **Settings → Advanced Browser Settings → Manage scripts**.
 2. Tap the check-for-updates button at the top. A green bar appears: *"1 script update available"*.
-3. Tap **REVIEW**, tick **Moonshine Asset Manager** and apply. Reload Torn.
+3. Tap **REVIEW**, tick **Moonshine ATM** and apply. Reload Torn.
 
 This only works if the script was added with **+ → Remote** and the link above. A pasted-in script can't update itself; delete it and add it again from the link.
 
@@ -240,9 +242,10 @@ Small edges add up over weeks, not days. Check **Market → Details** for the sc
 
 ## Publishing an update
 
-1. Change the `@version` line at the top of `moonshine-asset-manager.user.js`, for example `2.3.0` → `2.3.1`.
+1. Change the `@version` line at the top of `moonshine-atm.user.js`, for example `2.3.0` → `2.3.1`.
 2. Change `SCRIPT_VERSION` near the top of the code to the same number.
 3. Upload the new file to the `main` branch of this repository.
+4. Also save a copy as `moonshine-asset-manager.user.js` with `OLD_LINK = false` changed to `true`. Installs from the old link pull that copy, which keeps them working and tells them to switch to the new link.
 
 Everyone running the script will see the update within 6 hours. If the version number isn't raised, nobody is told about the update.
 
