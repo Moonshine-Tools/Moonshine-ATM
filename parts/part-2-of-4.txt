@@ -150,8 +150,11 @@
     for (const s of Object.values(an.market ? an.market.stocks : {})) {
       const owned = user.owned[s.id] || 0;
       const p = an.preds[s.id];
+      const price = domPrice(s.id) || s.price;
+      const cost = user.cost ? user.cost[s.id] : null;
       out[s.id] = {
-        s, price: domPrice(s.id) || s.price, owned,
+        s, price, owned, cost: cost || null,
+        profit: cost ? (price * (1 - FEE)) / cost - 1 : null, // after the 0.1% fee
         spare: owned - Core.protectedShares(s.benefit, owned),
         pred: p && p.pred, z: p ? p.z : NaN, pctile: p ? p.pctile : NaN,
         allowed: !ex.includes(s.acr),
@@ -411,8 +414,12 @@
       const shares = Math.ceil((amount * buf) / (x.price * (1 - FEE)));
       opts.push(Object.assign({}, x, { shares, fits: shares <= x.owned, breaks: shares > x.spare }));
     }
+    // First choice: stocks that are worth more than you paid, even after the 0.1% fee.
+    // Then stocks with no purchase record. Last: stocks you'd sell at a loss.
+    const anyProfit = opts.some((o) => o.profit != null && o.profit >= 0);
     const score = (o) => {
       let v = 0;
+      if (o.profit != null) v += o.profit >= 0 ? 100 : -100;
       if (useModel && o.pred) v -= o.pred.mean * 1000;            // sell the weakest expected stock
       if (settings.parkStock && o.s.acr === settings.parkStock.toUpperCase()) v += useModel ? 1 : 5;
       v += Math.min(useModel ? 1 : 5, (o.spare * o.price) / Math.max(amount, 1));
@@ -420,7 +427,7 @@
     };
     const mode = useModel ? 'model' : 'simple';
     const clean = opts.filter((o) => o.fits && !o.breaks).sort((a, b) => score(b) - score(a));
-    if (clean.length) return { legs: [clean[0]], alts: clean.slice(1, 4), mode };
+    if (clean.length) return { legs: [clean[0]], alts: clean.slice(1, 4), mode, anyProfit };
     const totalSpare = opts.reduce((a, o) => a + Math.max(0, o.spare) * o.price * (1 - FEE), 0);
     if (totalSpare >= amount) {
       const legs = []; let left = amount;
@@ -430,10 +437,10 @@
         legs.push(Object.assign({}, o, { shares: sh, breaks: false, cap: o.spare }));
         left -= sh * o.price * (1 - FEE);
       }
-      return { legs, alts: [], mode: 'split' };
+      return { legs, alts: [], mode: 'split', anyProfit };
     }
     const breaking = opts.filter((o) => o.fits).sort((a, b) => score(b) - score(a));
-    if (breaking.length) return { legs: [breaking[0]], alts: breaking.slice(1, 4), mode: 'breaks' };
+    if (breaking.length) return { legs: [breaking[0]], alts: breaking.slice(1, 4), mode: 'breaks', anyProfit };
     const all = opts.reduce((a, o) => a + o.owned * o.price * (1 - FEE), 0);
     return { error: `You asked for ${money(amount)}, but all your shares are worth about ${money(all)} after fees.` };
   }
@@ -566,4 +573,3 @@
 
   const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
     <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
-    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>

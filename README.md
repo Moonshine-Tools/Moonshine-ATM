@@ -25,7 +25,8 @@ It fills in the numbers. **You always press Torn's own Buy, Sell or give button.
 ### 💵 Quick withdraw
 Type how much cash you need, like `5m`, `750k` or `1.2b`. The script picks which stock to sell, opens its panel and fills in the exact number of shares, including the 0.1% selling fee and a small safety margin for price changes.
 
-- It sells the stock with the weakest outlook first.
+- **It sells stocks that are in profit first.** The script knows what you paid for your shares, and picks a stock worth more than you paid even after the 0.1% fee, so using the market as a bank doesn't cost you money. If every stock is below what you paid, it picks the smallest loss and tells you how much.
+- Among those, it sells the stock with the weakest outlook.
 - It never sells shares that are holding a benefit block. If it can't avoid that, it warns you and offers other stocks.
 - If no single stock has enough spare shares, it splits the withdrawal into separate sales and walks you through each one.
 
@@ -172,7 +173,6 @@ Everyone running the script will see the update within 6 hours. If the version n
 
 ## Roadmap
 
-- [ ] Withdraw from stocks that are up by more than the 0.1% fee first, using your purchase prices
 - [ ] Put a value on stock benefits in trade decisions
 
 ---

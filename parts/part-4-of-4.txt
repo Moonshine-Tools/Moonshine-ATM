@@ -1,8 +1,3 @@
-  }
-  async function updateBadges() {
-    try {
-      if (!apiKey()) return;
-      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
       updateCashBadge();
       if (!userMem) return;
       const an = await analyze();
@@ -380,7 +375,7 @@
       ${lines.map((l) => `<div class="tmm-sub">${esc(l)}</div>`).join('')}
       ${(warn || []).map((w) => `<div class="tmm-warn">${esc(w)}</div>`).join('')}
       <div class="tmm-status" id="tmm-status">Filling in the ${btn} box…</div>
-      ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}</button>`).join('')}</div>` : ''}
+      ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}${action === 'sell' && a.profit != null ? (a.profit >= 0 ? ' · in profit' : ' · at a loss') : ''}</button>`).join('')}</div>` : ''}
       ${extras && extras.length ? `<div class="tmm-row">${extras.map((x, i) => `<button class="tmm-plain" data-ex="${i}">${esc(x.long || x.label)}</button>`).join('')}</div>` : ''}
       <div class="tmm-row"><button class="tmm-plain" id="tmm-copy">Copy share count</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
     $('#tmm-x', s).onclick = closeSheet;
@@ -491,6 +486,15 @@
     if (plan.mode === 'split') warn.push('No single stock covers this without breaking a benefit, so it is split into separate sales.');
     if (!isSell && o.completes) warn.push(`This completes your next ${o.s.acr} benefit block.`);
     if (!isSell && o.overweight) warn.push(`This puts more than ${settings.maxWeightPct}% of your portfolio in ${o.s.acr}.`);
+    if (isSell && o.profit != null && o.profit < 0) {
+      const loss = o.shares * (o.cost - o.price * (1 - FEE));
+      warn.push(plan.anyProfit
+        ? `${o.s.acr} is below what you paid: this sale loses about ${money(loss)}. A stock in profit is listed below.`
+        : `All your stocks are below what you paid. This is the smallest hit: about ${money(loss)}.`);
+    }
+    const profitLine = isSell && o.profit != null && o.profit >= 0
+      ? `You paid about $${o.cost.toFixed(2)} a share, so this sells at ${pctPlain(o.profit, 2)} after the fee: no loss.`
+      : null;
     const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
     showLeg({
       kind: 'cash',
@@ -499,6 +503,7 @@
       lines: [
         isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
         quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
+        ...(profitLine ? [profitLine] : []),
       ],
       warn,
       alts: plan.alts,

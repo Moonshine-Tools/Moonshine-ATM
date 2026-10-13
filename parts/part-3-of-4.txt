@@ -1,3 +1,4 @@
+    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
     <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
 
   let root, sheet, pill = null, moon, menu, watchTimer = null;
@@ -501,3 +502,8 @@
     const note = $('[data-note="cash"]', root);
     if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
     moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+  }
+  async function updateBadges() {
+    try {
+      if (!apiKey()) return;
+      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }

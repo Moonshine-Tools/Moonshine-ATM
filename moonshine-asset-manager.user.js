@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.6.1
+// @version      2.7.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.6.1';
+  const SCRIPT_VERSION = '2.7.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -593,12 +593,21 @@
     const j = await api('user/?selections=stocks,money,profile');
     const owned = {};
     const us = j.stocks && typeof j.stocks === 'object' ? j.stocks : {};
+    const cost = {};
     for (const [id, s] of Object.entries(us)) {
-      const n = Number(s.total_shares) || 0;
-      if (n > 0) owned[String(s.stock_id || id)] = n;
+      const n = Number(s.total_shares ?? s.shares) || 0;
+      const sid = String(s.stock_id || id);
+      if (n > 0) owned[sid] = n;
+      // Average price paid, from the purchase records Torn keeps for each stock.
+      let sh = 0, paid = 0;
+      for (const tx of Object.values(s.transactions || {})) {
+        const q = Number(tx.shares) || 0, pr = Number(tx.bought_price) || 0;
+        if (q > 0 && pr > 0) { sh += q; paid += q * pr; }
+      }
+      if (sh > 0) cost[sid] = paid / sh;
     }
     userMem = {
-      t: Date.now(), owned, cash: Number(j.money_onhand) || 0,
+      t: Date.now(), owned, cost, cash: Number(j.money_onhand) || 0,
       factionId: Number(j.faction && j.faction.faction_id) || 0,
       state: String((j.status && j.status.state) || 'Okay'),
     };
@@ -834,8 +843,11 @@
     for (const s of Object.values(an.market ? an.market.stocks : {})) {
       const owned = user.owned[s.id] || 0;
       const p = an.preds[s.id];
+      const price = domPrice(s.id) || s.price;
+      const cost = user.cost ? user.cost[s.id] : null;
       out[s.id] = {
-        s, price: domPrice(s.id) || s.price, owned,
+        s, price, owned, cost: cost || null,
+        profit: cost ? (price * (1 - FEE)) / cost - 1 : null, // after the 0.1% fee
         spare: owned - Core.protectedShares(s.benefit, owned),
         pred: p && p.pred, z: p ? p.z : NaN, pctile: p ? p.pctile : NaN,
         allowed: !ex.includes(s.acr),
@@ -1095,8 +1107,12 @@
       const shares = Math.ceil((amount * buf) / (x.price * (1 - FEE)));
       opts.push(Object.assign({}, x, { shares, fits: shares <= x.owned, breaks: shares > x.spare }));
     }
+    // First choice: stocks that are worth more than you paid, even after the 0.1% fee.
+    // Then stocks with no purchase record. Last: stocks you'd sell at a loss.
+    const anyProfit = opts.some((o) => o.profit != null && o.profit >= 0);
     const score = (o) => {
       let v = 0;
+      if (o.profit != null) v += o.profit >= 0 ? 100 : -100;
       if (useModel && o.pred) v -= o.pred.mean * 1000;            // sell the weakest expected stock
       if (settings.parkStock && o.s.acr === settings.parkStock.toUpperCase()) v += useModel ? 1 : 5;
       v += Math.min(useModel ? 1 : 5, (o.spare * o.price) / Math.max(amount, 1));
@@ -1104,7 +1120,7 @@
     };
     const mode = useModel ? 'model' : 'simple';
     const clean = opts.filter((o) => o.fits && !o.breaks).sort((a, b) => score(b) - score(a));
-    if (clean.length) return { legs: [clean[0]], alts: clean.slice(1, 4), mode };
+    if (clean.length) return { legs: [clean[0]], alts: clean.slice(1, 4), mode, anyProfit };
     const totalSpare = opts.reduce((a, o) => a + Math.max(0, o.spare) * o.price * (1 - FEE), 0);
     if (totalSpare >= amount) {
       const legs = []; let left = amount;
@@ -1114,10 +1130,10 @@
         legs.push(Object.assign({}, o, { shares: sh, breaks: false, cap: o.spare }));
         left -= sh * o.price * (1 - FEE);
       }
-      return { legs, alts: [], mode: 'split' };
+      return { legs, alts: [], mode: 'split', anyProfit };
     }
     const breaking = opts.filter((o) => o.fits).sort((a, b) => score(b) - score(a));
-    if (breaking.length) return { legs: [breaking[0]], alts: breaking.slice(1, 4), mode: 'breaks' };
+    if (breaking.length) return { legs: [breaking[0]], alts: breaking.slice(1, 4), mode: 'breaks', anyProfit };
     const all = opts.reduce((a, o) => a + o.owned * o.price * (1 - FEE), 0);
     return { error: `You asked for ${money(amount)}, but all your shares are worth about ${money(all)} after fees.` };
   }
@@ -2136,7 +2152,7 @@
       ${lines.map((l) => `<div class="tmm-sub">${esc(l)}</div>`).join('')}
       ${(warn || []).map((w) => `<div class="tmm-warn">${esc(w)}</div>`).join('')}
       <div class="tmm-status" id="tmm-status">Filling in the ${btn} box…</div>
-      ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}</button>`).join('')}</div>` : ''}
+      ${alts && alts.length ? `<div class="tmm-sub">Use a different stock:</div><div class="tmm-row">${alts.map((a, i) => `<button class="tmm-chip" data-alt="${i}">${esc(a.s.acr)} · ${num(a.shares)}${action === 'sell' && a.profit != null ? (a.profit >= 0 ? ' · in profit' : ' · at a loss') : ''}</button>`).join('')}</div>` : ''}
       ${extras && extras.length ? `<div class="tmm-row">${extras.map((x, i) => `<button class="tmm-plain" data-ex="${i}">${esc(x.long || x.label)}</button>`).join('')}</div>` : ''}
       <div class="tmm-row"><button class="tmm-plain" id="tmm-copy">Copy share count</button><button class="tmm-plain" id="tmm-x">Close</button></div>`);
     $('#tmm-x', s).onclick = closeSheet;
@@ -2247,6 +2263,15 @@
     if (plan.mode === 'split') warn.push('No single stock covers this without breaking a benefit, so it is split into separate sales.');
     if (!isSell && o.completes) warn.push(`This completes your next ${o.s.acr} benefit block.`);
     if (!isSell && o.overweight) warn.push(`This puts more than ${settings.maxWeightPct}% of your portfolio in ${o.s.acr}.`);
+    if (isSell && o.profit != null && o.profit < 0) {
+      const loss = o.shares * (o.cost - o.price * (1 - FEE));
+      warn.push(plan.anyProfit
+        ? `${o.s.acr} is below what you paid: this sale loses about ${money(loss)}. A stock in profit is listed below.`
+        : `All your stocks are below what you paid. This is the smallest hit: about ${money(loss)}.`);
+    }
+    const profitLine = isSell && o.profit != null && o.profit >= 0
+      ? `You paid about $${o.cost.toFixed(2)} a share, so this sells at ${pctPlain(o.profit, 2)} after the fee: no loss.`
+      : null;
     const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
     showLeg({
       kind: 'cash',
@@ -2255,6 +2280,7 @@
       lines: [
         isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
         quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
+        ...(profitLine ? [profitLine] : []),
       ],
       warn,
       alts: plan.alts,
