@@ -86,6 +86,8 @@ For every stock, the script tracks its **normal price** (a 7-day moving average)
 
 It then looks back through history: *when this stock was this far from normal, what happened over the next 6 hours, 1 day and 7 days?* The cut-offs for "far from normal" come from the data, not fixed rules. Stocks with little history of their own lean on market-wide patterns until they have enough examples.
 
+**More signals, only if they help.** Besides the 7-day view, the script can also use each stock's distance from its 1-day and 30-day normal price, how far it is from normal compared with the whole market, its 7-day trend, and what the other time horizons predict. A small formula weighs them. Each signal is added only if it improves predictions on data held back from training, and the combined model is then used only if it beats the basic one on the unseen test period. Market → Details shows which signals made it in.
+
 ### 3. Testing itself
 Before it recommends anything, the model has to prove itself on data it hasn't seen:
 

@@ -1,3 +1,47 @@
+      ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
+      ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
+      ${c('s-vault', 'Offer faction vault deposits (only shown if you are in a faction)', settings.factionVault)}
+      ${f('s-church', 'Church limit: only suggest donating amounts up to this, and only when it can\'t buy a single share', short(settings.churchMax))}
+      <h4>Recommendations</h4>
+      ${f('s-edge', 'Minimum advantage after fees (%)', settings.minEdgePct)}
+      ${f('s-t', 'Evidence required (how many times bigger than the uncertainty)', settings.evidenceT)}
+      ${f('s-maxw', 'Most of your portfolio in one stock (%)', settings.maxWeightPct)}
+      ${f('s-mint', 'Smallest trade worth suggesting', short(settings.minTrade))}
+      ${c('s-unval', 'Show recommendations even if the model fails its test (not advised)', settings.showUnvalidated)}
+      <h4>Data and display</h4>
+      ${f('s-days', 'Days of history to download', settings.historyDays)}
+      ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
+      <div class="tmm-row"><button class="tmm-plain" id="s-moon">Move the moon back to its default spot</button></div>
+      <h4>Updates</h4>
+      <div class="tmm-sub" id="s-ver">You have v${SCRIPT_VERSION}.${updateConfigured() ? '' : ' Update checks are off until the GitHub link is set in the script.'}</div>
+      <div class="tmm-row">${updateConfigured() ? '<button class="tmm-plain" id="s-chk">Check for updates</button>' : ''}</div>
+      <div class="tmm-row"><button class="tmm-act" id="s-save">Save settings</button></div>`;
+    const chk = $('#s-chk', body);
+    if (chk) chk.onclick = async () => {
+      chk.textContent = 'Checking…';
+      const u = await checkForUpdate(true);
+      const v = $('#s-ver', body);
+      if (u) {
+        v.innerHTML = `Update available: <b>v${esc(u.latest)}</b> (you have v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Update now'; chk.className = 'tmm-act'; chk.onclick = installUpdate;
+      } else {
+        const s = store.get('update', null);
+        v.textContent = s && s.err ? `Couldn't reach GitHub: ${s.err}` : `You have the latest version (v${SCRIPT_VERSION}).`;
+        chk.textContent = 'Check again';
+      }
+    };
+    $('#s-moon', body).onclick = () => { store.set('dock', { edge: 'right', pos: 0.72 }); placeMoon(); };
+    $('#s-save', body).onclick = () => {
+      const g = (id) => $('#' + id, body).value.trim();
+      const n = (id, d, lo, hi) => { const x = parseFloat(g(id)); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+      if (!pda) settings.apiKey = g('s-key');
+      const keep = parseAmount(g('s-keep')); settings.keepOnHand = keep > 0 ? keep : 0;
+      settings.parkStock = g('s-park').toUpperCase();
+      settings.exclude = g('s-ex');
+      settings.bufferPct = n('s-buf', DEFAULTS.bufferPct, 0, 5);
+      settings.depositOwnedOnly = $('#s-own', body).checked;
+      settings.factionVault = $('#s-vault', body).checked;
+      const cm = parseAmount(g('s-church')); settings.churchMax = cm >= 0 ? cm : DEFAULTS.churchMax;
       settings.minEdgePct = n('s-edge', DEFAULTS.minEdgePct, 0, 50);
       settings.evidenceT = n('s-t', DEFAULTS.evidenceT, 0, 10);
       settings.maxWeightPct = n('s-maxw', DEFAULTS.maxWeightPct, 5, 100);

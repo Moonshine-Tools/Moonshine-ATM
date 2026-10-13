@@ -1,3 +1,182 @@
+  const DB = (() => {
+    let dbp = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise((res, rej) => {
+        const r = indexedDB.open('torn_market_mgr', 1);
+        r.onupgradeneeded = () => {
+          const d = r.result;
+          d.createObjectStore('hourly', { keyPath: 'sid' });          // per stock: {sid, acr, t:[], c:[]}
+          d.createObjectStore('minute', { keyPath: 't' });           // raw: {t, p:{sid:price}}
+          d.createObjectStore('meta', { keyPath: 'k' });
+          d.createObjectStore('decisions', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('executions', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('snapshots', { keyPath: 't' });
+        };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      return dbp;
+    }
+    const p = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    async function tx(name, mode, fn) {
+      const d = await open();
+      const t = d.transaction(name, mode);
+      const out = fn(t.objectStore(name));
+      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+      return out instanceof Promise ? out : out;
+    }
+    return {
+      get: (n, k) => tx(n, 'readonly', (s) => p(s.get(k))),
+      put: (n, v) => tx(n, 'readwrite', (s) => p(s.put(v))),
+      add: (n, v) => tx(n, 'readwrite', (s) => p(s.add(v))),
+      all: (n, range) => tx(n, 'readonly', (s) => p(s.getAll(range))),
+      count: (n) => tx(n, 'readonly', (s) => p(s.count())),
+      delBelow: (n, k) => tx(n, 'readwrite', (s) => p(s.delete(IDBKeyRange.upperBound(k, true)))),
+      clear: (n) => tx(n, 'readwrite', (s) => p(s.clear())),
+      async meta(k, d = null) { const r = await this.get('meta', k); return r ? r.v : d; },
+      setMeta(k, v) { return this.put('meta', { k, v }); },
+    };
+  })();
+
+  function mergeSeries(rec, points) {
+    const m = new Map();
+    for (let i = 0; i < rec.t.length; i++) m.set(rec.t[i], rec.c[i]);
+    for (const [t, c] of points) if (c > 0) m.set(t, c);
+    const ts = Array.from(m.keys()).sort((a, b) => a - b);
+    rec.t = ts; rec.c = ts.map((t) => m.get(t));
+    return rec;
+  }
+
+  // =====================================================================
+  //  TORN DATA
+  // =====================================================================
+  let marketMem = null;
+  async function getMarket(maxAgeSec = 60) {
+    const cached = marketMem || store.get('market', null);
+    if (cached && Date.now() - cached.t < maxAgeSec * 1000) return (marketMem = cached);
+    const j = await api('torn/?selections=stocks');
+    const stocks = {};
+    for (const [id, s] of Object.entries(j.stocks || {})) {
+      stocks[id] = { id: String(s.stock_id || id), acr: s.acronym, name: s.name, price: Number(s.current_price), cap: Number(s.market_cap) || 0, benefit: s.benefit || null };
+    }
+    marketMem = { t: Date.now(), stocks };
+    store.set('market', marketMem);
+    return marketMem;
+  }
+
+  let userMem = null;
+  async function getUser(maxAgeSec = 20) {
+    if (userMem && Date.now() - userMem.t < maxAgeSec * 1000) return userMem;
+    const j = await api('user/?selections=stocks,money,profile');
+    const owned = {};
+    const us = j.stocks && typeof j.stocks === 'object' ? j.stocks : {};
+    const cost = {};
+    for (const [id, s] of Object.entries(us)) {
+      const n = Number(s.total_shares ?? s.shares) || 0;
+      const sid = String(s.stock_id || id);
+      if (n > 0) owned[sid] = n;
+      // Average price paid, from the purchase records Torn keeps for each stock.
+      let sh = 0, paid = 0;
+      for (const tx of Object.values(s.transactions || {})) {
+        const q = Number(tx.shares) || 0, pr = Number(tx.bought_price) || 0;
+        if (q > 0 && pr > 0) { sh += q; paid += q * pr; }
+      }
+      if (sh > 0) cost[sid] = paid / sh;
+    }
+    userMem = {
+      t: Date.now(), owned, cost, cash: Number(j.money_onhand) || 0,
+      factionId: Number(j.faction && j.faction.faction_id) || 0,
+      state: String((j.status && j.status.state) || 'Okay'),
+    };
+    return userMem;
+  }
+
+  // =====================================================================
+  //  DATA COLLECTOR (runs while any Torn page is open)
+  // =====================================================================
+  const TAB = Math.random().toString(36).slice(2);
+  function isLeader() {
+    const l = store.get('leader', null);
+    if (!l || l.id === TAB || Date.now() - l.ts > 90000) { store.set('leader', { id: TAB, ts: Date.now() }); return true; }
+    return false;
+  }
+
+  const sync = { running: false, status: '' };
+
+  async function collectTick() {
+    if (!apiKey() || document.visibilityState === 'hidden' || !isLeader()) return;
+    try {
+      const m = await getMarket(55);
+      const t = Math.floor(m.t / 60000) * 60;
+      const p = {}; for (const s of Object.values(m.stocks)) p[s.id] = s.price;
+      await DB.put('minute', { t, p });
+      await foldMinutes();
+      const lastUser = await DB.meta('lastUserSnap', 0);
+      if (Date.now() - lastUser > 5 * 60000) {
+        const u = await getUser(60);
+        await snapshot(m, u);
+        await DB.setMeta('lastUserSnap', Date.now());
+        updateBadges();
+      }
+      const lastSync = await DB.meta('lastTornsy', 0);
+      if (!sync.running && Date.now() - lastSync > 60 * 60000) syncHistory().catch(() => {});
+      const lastPrune = await DB.meta('lastPrune', 0);
+      if (Date.now() - lastPrune > 86400000) {
+        await DB.delBelow('minute', Math.floor(Date.now() / 1000) - 90 * 86400);
+        await DB.setMeta('lastPrune', Date.now());
+      }
+    } catch (e) { /* retry next minute */ }
+  }
+
+  // Roll raw minute prices up into hourly closes (keeps raw minutes for 90 days).
+  async function foldMinutes() {
+    const nowH = hourStart(Math.floor(Date.now() / 1000));
+    const last = await DB.meta('foldedTo', 0);
+    if (last >= nowH) return;
+    const rows = await DB.all('minute', IDBKeyRange.bound(Math.max(last, nowH - 7 * 86400), nowH, false, true));
+    const closes = {};
+    for (const r of rows) {
+      const h = hourStart(r.t);
+      for (const [sid, price] of Object.entries(r.p)) (closes[sid] = closes[sid] || {})[h] = price;
+    }
+    const market = marketMem || store.get('market', null);
+    for (const [sid, byH] of Object.entries(closes)) {
+      const rec = (await DB.get('hourly', sid)) || { sid, acr: market && market.stocks[sid] ? market.stocks[sid].acr : '', t: [], c: [] };
+      mergeSeries(rec, Object.entries(byH).map(([h, c]) => [Number(h), c]));
+      await DB.put('hourly', rec);
+    }
+    await DB.setMeta('foldedTo', nowH);
+    if (A) A.dirty = true;
+  }
+
+  async function snapshot(m, u) {
+    let val = u.cash;
+    const holdings = {};
+    for (const [sid, n] of Object.entries(u.owned)) {
+      const s = m.stocks[sid]; if (!s) continue;
+      val += n * s.price; holdings[sid] = n;
+    }
+    await DB.put('snapshots', { t: hourStart(Math.floor(Date.now() / 1000)), cash: u.cash, holdings, value: val });
+  }
+
+  // Download hourly history from tornsy.com: newest first, then older pages.
+  async function syncHistory(force = false) {
+    if (sync.running) return;
+    sync.running = true;
+    try {
+      const m = await getMarket(600);
+      const prog = (await DB.meta('syncProg', {})) || {};
+      const minT = Math.floor(Date.now() / 1000) - settings.historyDays * 86400;
+      const ids = Object.keys(m.stocks);
+      let round = 0;
+      while (round++ < 40) {
+        let work = false;
+        for (let k = 0; k < ids.length; k++) {
+          if (document.visibilityState === 'hidden' && !force) return;
+          const sid = ids[k], s = m.stocks[sid];
+          const st = prog[sid] || (prog[sid] = {});
+          const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };
           rec.acr = s.acr;
           const base = `https://tornsy.com/api/${s.acr.toLowerCase()}?interval=h1&limit=2000`;
           const nowSec = Math.floor(Date.now() / 1000);
@@ -63,19 +242,19 @@
       await yieldUI();
       let val = await DB.meta('validation', null);
       if (nS >= 5 && (!val || force || val.ver !== Core.VAL_VER || Date.now() - val.at > 6 * 3600000 || val.nStocks !== nS)) {
-        val = Core.validate(S);
+        val = await Core.validate(S, undefined, { yieldFn: yieldUI });
         val.at = Date.now(); val.nStocks = nS;
         await DB.setMeta('validation', val);
       }
       await yieldUI();
-      const model = nS >= 5 ? Core.fit(S, [6, 24, 168]) : null;
+      const model = nS >= 5 ? Core.buildModel(S, val && val.spec, [6, 24, 168]) : null;
       const h = val && val.h ? val.h : 24;
       const preds = {};
       for (const [sid, s] of Object.entries(S)) {
         const i = s.n - 1, z = s.z[i];
         let below = 0, tot = 0;
         for (let j = Core.WARMUP; j < s.n; j += 6) if (Number.isFinite(s.z[j])) { tot++; if (s.z[j] <= z) below++; }
-        preds[sid] = { z, pctile: tot ? below / tot : NaN, pred: model ? Core.predict(model, sid, z, h) : null, lastT: s.t0 + i * 3600 };
+        preds[sid] = { z, pctile: tot ? below / tot : NaN, pred: model ? Core.predictAt(model, S, sid, i, h) : null, lastT: s.t0 + i * 3600 };
       }
       const out = {
         t: Date.now(), S, val, model, h, preds, market,
@@ -173,6 +352,13 @@
     return 'Light';
   }
 
+  const signalName = (x) => `${Core.SIGNAL_NAMES[x.key] || x.key}${x.key === 'z' ? ` (${hLabel(x.h)} view)` : ''}`;
+  const signalList = (arr) => [...new Set(arr.map(signalName))].join(', ');
+  function modelLabel(an) {
+    const sp = an.val && an.val.spec;
+    return sp && sp.kind === 'ens' ? `smarter model: 7-day normal price + ${signalList(sp.inputs.slice(1))}` : 'basic model: 7-day normal price';
+  }
+
   function whyLines(an, rot, L) {
     const A_ = L[rot.sell], B_ = L[rot.buy];
     const lines = [];
@@ -182,9 +368,11 @@
       return `${x.s.acr} is ${Math.abs(x.z).toFixed(1)} standard deviations ${dir} its 7-day normal price${pc}.`;
     };
     const hist = (x) => {
-      const p = x.pred;
-      const src = p.nStock > 50 ? `${num(p.nStock)} hourly samples of ${x.s.acr}` : `mostly market-wide data (${x.s.acr} has few similar moments)`;
-      return `When ${x.s.acr} was in this range before, its next ${hLabel(an.h)} change averaged ${pct(p.mean)}, rising ${Math.round(p.win * 100)}% of the time (${src}).`;
+      const p = x.pred, b = p.base || p;
+      const src = b.nStock > 50 ? `${num(b.nStock)} hourly samples of ${x.s.acr}` : `mostly market-wide data (${x.s.acr} has few similar moments)`;
+      let line = `When ${x.s.acr} was in this range before, its next ${hLabel(an.h)} change averaged ${pct(b.mean)}, rising ${Math.round(b.win * 100)}% of the time (${src}).`;
+      if (p.parts && p.parts.length > 1) line += ` Other signals (${signalList(p.parts.slice(1))}) put it at ${pct(p.mean)}.`;
+      return line;
     };
     lines.push(desc(B_), hist(B_), desc(A_), hist(A_));
     lines.push(`Difference after the 0.1% selling fee: ${pct(rot.adv)} over ${hLabel(an.h)}s, about ${rot.t.toFixed(1)}× its uncertainty.`);
@@ -565,52 +753,3 @@
   #tmm-root .tmm-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
   #tmm-root .tmm-chip{background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:7px 12px;font-size:14px;cursor:pointer}
   #tmm-root .tmm-input{width:100%;font-size:20px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink)}
-  #tmm-root .tmm-act{background:var(--brass);color:var(--onbrass);border:0;border-radius:8px;padding:11px 16px;font-weight:700;font-size:15px;line-height:1;cursor:pointer}
-  #tmm-root .tmm-plain{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer}
-  #tmm-root .tmm-tabs{display:flex;gap:4px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
-  #tmm-root .tmm-tab{background:none;border:0;color:var(--muted);padding:8px 12px;font-weight:600;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
-  #tmm-root .tmm-tab[aria-selected=true]{color:var(--head);border-bottom-color:var(--brass)}
-  #tmm-root .tmm-kpis{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
-  #tmm-root .tmm-kpis b{display:block;font-size:17px;color:var(--head)} #tmm-root .tmm-kpis span{color:var(--muted);font-size:12px}
-  #tmm-root .tmm-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:transparent}
-  #tmm-root .tmm-tbl th,#tmm-root .tmm-tbl td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--ink);background:transparent}
-  #tmm-root .tmm-tbl th:first-child,#tmm-root .tmm-tbl td:first-child{text-align:left} #tmm-root .tmm-tbl th{color:var(--muted);font-weight:600}
-  #tmm-root .tmm-scroll{overflow-x:auto}
-  #tmm-root .tmm-field{margin:9px 0} #tmm-root .tmm-field label{display:block;color:var(--muted);margin-bottom:3px}
-  #tmm-root .tmm-field input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--field);color:var(--ink);font-size:15px}
-  #tmm-root .tmm-check{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--ink)}
-  #tmm-root .tmm-pos,#tmm-root .tmm-tbl td.tmm-pos,#tmm-root .tmm-kpis b.tmm-pos{color:var(--pos)} #tmm-root .tmm-neg,#tmm-root .tmm-tbl td.tmm-neg,#tmm-root .tmm-kpis b.tmm-neg{color:var(--neg)}
-  #tmm-root .tmm-chart-wrap{position:relative}
-  #tmm-root .tmm-chart{display:block;width:100%;height:auto;touch-action:pan-y}
-  #tmm-root .tmm-c-grid{stroke:var(--line);stroke-width:1}
-  #tmm-root .tmm-c-zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
-  #tmm-root .tmm-c-ax{fill:var(--muted);font-size:10px}
-  #tmm-root .tmm-c-lab{fill:var(--ink);font-size:10px;font-weight:600}
-  #tmm-root .tmm-c-you{fill:none;stroke:var(--you);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-  #tmm-root .tmm-c-mkt{fill:none;stroke:var(--mkt);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:5 3}
-  #tmm-root .tmm-c-x{stroke:var(--muted);stroke-width:1}
-  #tmm-root .tmm-c-tip{position:absolute;top:0;width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;line-height:1.35;pointer-events:none;box-shadow:0 2px 8px var(--shadow)}
-  #tmm-root .tmm-c-legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:4px}
-  #tmm-root .tmm-c-sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--you);vertical-align:middle;margin-right:5px}
-  #tmm-root .tmm-c-sw.mkt{border-top:2px dashed var(--mkt)}
-  #tmm-root .tmm-chip[aria-pressed=true]{border-color:var(--brass);color:var(--head);font-weight:600}
-  #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
-  #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
-    background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
-  #tmm-root .tmm-pill.card{display:block;border-radius:14px;padding:6px 6px 8px 12px;width:calc(100vw - 20px);max-width:520px}
-  #tmm-root .tmm-pill-row{display:flex;gap:6px;align-items:center}
-  #tmm-root .tmm-pill-row .tmm-pill-t{flex:1}
-  #tmm-root .tmm-pill-info{margin:4px 6px 0 0;padding-left:16px;font-weight:400;font-size:12.5px;line-height:1.35;color:var(--muted)}
-  #tmm-root .tmm-pill-info li{margin:2px 0}
-  #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
-  #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  #tmm-root .tmm-pill button{white-space:nowrap}
-  #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
-  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
-  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
-  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
-  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
-
-  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
-    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>

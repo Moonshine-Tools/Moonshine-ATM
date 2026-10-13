@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.9.1
+// @version      3.0.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -51,7 +51,7 @@
     const QS = [0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95]; // z-bin edges (learned quantiles)
     const SHRINK_K = 10;       // effective samples needed before a stock's own data outweighs the pooled market
     const POOL_DEP = 4;
-    const VAL_VER = 2;         // bump when pass/fail rules change        // stocks move together, so pooled samples count for less
+    const VAL_VER = 3;         // bump when pass/fail rules or the model change        // stocks move together, so pooled samples count for less
 
     // rows: [{t (unix sec, hour-aligned), c (close)}] sorted by t
     function dense(rows) {
@@ -68,22 +68,42 @@
       return { t0, n, lp };
     }
 
-    // Causal features: z at i uses only lp[0..i].
-    function features(lp) {
-      const a = 2 / (SPAN + 1), n = lp.length;
-      const z = new Float64Array(n).fill(NaN);
-      const vol = new Float64Array(n).fill(NaN);
-      let m = lp[0], v = 0, vr = 0;
+    // Distance from an exponential moving average, in that average's own
+    // standard deviations. Causal: the value at i uses only lp[0..i].
+    function emaZ(lp, span, warm, Arr = Float64Array) {
+      const a = 2 / (span + 1), n = lp.length;
+      const z = new Arr(n).fill(NaN);
+      let m = lp[0], v = 0;
       for (let i = 1; i < n; i++) {
         const d = lp[i] - m;
-        if (i >= WARMUP && v > 0) z[i] = d / Math.sqrt(v);
-        const r = lp[i] - lp[i - 1];
-        vr = (1 - a) * vr + a * r * r;
-        if (i >= SPAN) vol[i] = Math.sqrt(vr);
+        if (i >= warm && v > 0) z[i] = d / Math.sqrt(v);
         v = (1 - a) * v + a * d * d;
         m = (1 - a) * m + a * lp[i];
       }
-      return { z, vol };
+      return z;
+    }
+
+    // Signals per stock (all causal):
+    //  z   distance from its 7-day normal price (the original signal)
+    //  z1  distance from its 1-day normal price
+    //  z30 distance from its 30-day normal price
+    //  mo  7-day trend, scaled by how jumpy the stock is
+    //  zr  (added in prepare) its 7-day distance minus the market's average
+    function features(lp) {
+      const a = 2 / (SPAN + 1), n = lp.length;
+      const z = emaZ(lp, SPAN, WARMUP);
+      const z1 = emaZ(lp, 24, 96, Float32Array);
+      const z30 = emaZ(lp, 720, 1440, Float32Array);
+      const vol = new Float64Array(n).fill(NaN);
+      const mo = new Float32Array(n).fill(NaN);
+      let vr = 0;
+      for (let i = 1; i < n; i++) {
+        const r = lp[i] - lp[i - 1];
+        vr = (1 - a) * vr + a * r * r;
+        if (i >= SPAN) vol[i] = Math.sqrt(vr);
+        if (i >= WARMUP && vol[i] > 0) mo[i] = (lp[i] - lp[i - SPAN]) / (vol[i] * Math.sqrt(SPAN));
+      }
+      return { z, z1, z30, mo, vol };
     }
 
     function prepare(rowsBySid) {
@@ -93,6 +113,22 @@
         if (!d || d.n < WARMUP + 48) continue;
         Object.assign(d, features(d.lp));
         S[sid] = d;
+      }
+      // zr: how far a stock is from normal compared with the whole market.
+      const tot = new Map();
+      for (const s of Object.values(S)) {
+        for (let i = 0; i < s.n; i++) {
+          if (!Number.isFinite(s.z[i])) continue;
+          const t = s.t0 + i * HOUR, e = tot.get(t);
+          if (e) { e[0] += s.z[i]; e[1]++; } else tot.set(t, [s.z[i], 1]);
+        }
+      }
+      for (const s of Object.values(S)) {
+        s.zr = new Float32Array(s.n).fill(NaN);
+        for (let i = 0; i < s.n; i++) {
+          const e = Number.isFinite(s.z[i]) && tot.get(s.t0 + i * HOUR);
+          if (e && e[1] >= 5) s.zr[i] = s.z[i] - e[0] / e[1];
+        }
       }
       return S;
     }
@@ -110,12 +146,13 @@
 
     // Learn E[forward log return | z-bin] per stock and pooled.
     // Only uses samples whose forward window ends before tCut (no leakage).
-    function fit(S, horizons, tCut = Infinity) {
+    function fit(S, horizons, tCut = Infinity, key = 'z') {
       const zs = [];
       for (const s of Object.values(S)) {
+        const f = s[key];
         for (let i = WARMUP; i < s.n; i += 6) {
           if (s.t0 + i * HOUR >= tCut) break;
-          if (Number.isFinite(s.z[i])) zs.push(s.z[i]);
+          if (Number.isFinite(f[i])) zs.push(f[i]);
         }
       }
       if (zs.length < 200) return null;
@@ -126,9 +163,10 @@
         const per = {};
         for (const [sid, s] of Object.entries(S)) {
           const bins = Array.from({ length: QS.length + 1 }, newBin);
+          const f = s[key];
           for (let i = WARMUP; i + h < s.n; i++) {
             if (s.t0 + (i + h) * HOUR >= tCut) break;
-            const z = s.z[i];
+            const z = f[i];
             if (!Number.isFinite(z)) continue;
             const r = s.lp[i + h] - s.lp[i];
             const b = binOf(z, edges);
@@ -138,7 +176,7 @@
         }
         stats[h] = { pooled, per };
       }
-      return { edges, horizons, stats, tCut };
+      return { edges, horizons, stats, tCut, key };
     }
 
     function binStats(x, h, dep = 1) {
@@ -173,6 +211,165 @@
       return [a, b];
     }
 
+    // ------------------------------------------------------------------
+    //  Smarter model: several signals combined.
+    //  Each signal gets its own learned "what happened next" table (like the
+    //  original), then a small ridge regression weighs them. Signals are added
+    //  one at a time and kept only if they improve ranking on data that wasn't
+    //  used to set the weights.
+    // ------------------------------------------------------------------
+    const SIGNAL_NAMES = { z: '7-day normal price', z1: '1-day normal price', z30: '30-day normal price', zr: 'compared with the market', mo: '7-day trend' };
+    const ALL_KEYS = ['z', 'z1', 'z30', 'zr', 'mo'];
+
+    function candidateInputs(h, horizons) {
+      const out = [{ key: 'z', h }];
+      for (const hh of horizons) if (hh !== h) out.push({ key: 'z', h: hh });
+      for (const k of ALL_KEYS) if (k !== 'z') out.push({ key: k, h });
+      return out;
+    }
+
+    function fitAll(S, keys, horizons, tCut) {
+      const M = {};
+      for (const k of keys) { const m = fit(S, horizons, tCut, k); if (!m) return null; M[k] = m; }
+      return M;
+    }
+
+    // Rows on a shared time grid: x = each input's prediction, y = actual return.
+    function makeRows(S, models, inputs, h, tFrom, tTo, step) {
+      const rows = [];
+      const t0 = Math.ceil(tFrom / (step * HOUR)) * step * HOUR;
+      for (let t = t0; t + h * HOUR < tTo; t += step * HOUR) {
+        for (const [sid, s] of Object.entries(S)) {
+          const i = idxAt(s, t);
+          if (i < 0 || i + h >= s.n) continue;
+          const x = new Float64Array(inputs.length);
+          let ok = true;
+          for (let k = 0; k < inputs.length && ok; k++) {
+            const p = predict(models[inputs[k].key], sid, s[inputs[k].key][i], inputs[k].h);
+            if (p) x[k] = p.mean; else ok = false;
+          }
+          if (ok) rows.push({ t, x, y: s.lp[i + h] - s.lp[i] });
+        }
+      }
+      return rows;
+    }
+
+    // Ridge regression on standardised columns `cols` (lam keeps weights modest).
+    function ridge(rows, cols, lam = 0.1) {
+      const d = cols.length, n = rows.length;
+      if (n < 50) return null;
+      const mu = new Float64Array(d), sd = new Float64Array(d);
+      let my = 0;
+      for (const r of rows) { my += r.y; for (let j = 0; j < d; j++) mu[j] += r.x[cols[j]]; }
+      my /= n; for (let j = 0; j < d; j++) mu[j] /= n;
+      for (const r of rows) for (let j = 0; j < d; j++) sd[j] += (r.x[cols[j]] - mu[j]) ** 2;
+      for (let j = 0; j < d; j++) sd[j] = Math.sqrt(sd[j] / n) || 1e-12;
+      const A = Array.from({ length: d }, () => new Float64Array(d + 1));
+      for (const r of rows) {
+        const zx = cols.map((c, j) => (r.x[c] - mu[j]) / sd[j]);
+        for (let a = 0; a < d; a++) { A[a][d] += zx[a] * (r.y - my); for (let b = 0; b < d; b++) A[a][b] += zx[a] * zx[b]; }
+      }
+      for (let a = 0; a < d; a++) { for (let b = 0; b <= d; b++) A[a][b] /= n; A[a][a] += lam * A[a][a] + 1e-12; }
+      for (let c = 0; c < d; c++) { // Gaussian elimination
+        let piv = c; for (let r = c + 1; r < d; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+        [A[c], A[piv]] = [A[piv], A[c]];
+        for (let r = 0; r < d; r++) if (r !== c) { const f = A[r][c] / A[c][c]; for (let k = c; k <= d; k++) A[r][k] -= f * A[c][k]; }
+      }
+      const w = new Float64Array(d); let b = my;
+      for (let j = 0; j < d; j++) { w[j] = A[j][d] / A[j][j] / sd[j]; b -= w[j] * mu[j]; }
+      return { w: Array.from(w), b };
+    }
+
+    // Ranking skill (mean correlation per time step, as a t-statistic).
+    function icOfRows(rows, predFn) {
+      const byT = new Map();
+      for (const r of rows) { const g = byT.get(r.t); if (g) g.push(r); else byT.set(r.t, [r]); }
+      const ics = [];
+      for (const g of byT.values()) {
+        if (g.length < 5) continue;
+        const c = corr(g.map(predFn), g.map((r) => r.y));
+        if (Number.isFinite(c)) ics.push(c);
+      }
+      if (ics.length < 3) return -99;
+      const m = ics.reduce((a, b) => a + b, 0) / ics.length;
+      const sdv = Math.sqrt(ics.reduce((a, b) => a + (b - m) ** 2, 0) / (ics.length - 1)) || 1e-9;
+      return (m / sdv) * Math.sqrt(ics.length);
+    }
+
+    // Choose signals for horizon h using only data before tCut.
+    // Tables are learned on the first 75%; weights on the next part; the
+    // last part judges whether adding a signal helped.
+    async function selectInputs(S, h, horizons, tCut, pause = () => null) {
+      const [a] = range(S);
+      const end = Math.min(tCut, range(S)[1]);
+      const tMid = a + Math.floor(((end - a) * 0.75) / HOUR) * HOUR;
+      const tW = tMid + Math.floor(((end - tMid) * 0.5) / HOUR) * HOUR;
+      const cands = candidateInputs(h, horizons);
+      const early = fitAll(S, ALL_KEYS, horizons, tMid);
+      if (!early) return null;
+      await pause();
+      const step = Math.max(6, Math.min(h, 24));
+      const rowsA = makeRows(S, early, cands, h, tMid, tW, step);
+      const rowsB = makeRows(S, early, cands, h, tW, end, step);
+      if (rowsA.length < 200 || rowsB.length < 200) return null;
+      const score = (cols) => {
+        const fitw = ridge(rowsA, cols);
+        if (!fitw) return -99;
+        return icOfRows(rowsB, (r) => cols.reduce((s, c, j) => s + fitw.w[j] * r.x[c], fitw.b));
+      };
+      let chosen = [0], best = score(chosen);
+      const baseScore = best;
+      for (;;) {
+        let add = -1, top = best;
+        for (let c = 1; c < cands.length; c++) {
+          if (chosen.includes(c)) continue;
+          const s = score([...chosen, c]);
+          if (s > top + 0.2) { top = s; add = c; }
+          await pause();
+        }
+        if (add < 0) break;
+        chosen.push(add); best = top;
+      }
+      return { inputs: chosen.map((c) => cands[c]), score: best, baseScore, tMid };
+    }
+
+    // Build a model from a spec: { kind: 'base' } or { kind: 'ens', h, inputs }.
+    function buildModel(S, spec, horizons, tCut = Infinity) {
+      if (!spec || spec.kind !== 'ens') return fit(S, horizons, tCut);
+      const [a, b0] = range(S);
+      const end = Math.min(tCut, b0);
+      const tMid = a + Math.floor(((end - a) * 0.75) / HOUR) * HOUR;
+      const keys = [...new Set(spec.inputs.map((x) => x.key))];
+      const hs = [...new Set([...horizons, ...spec.inputs.map((x) => x.h)])];
+      const early = fitAll(S, keys, hs, tMid);
+      if (!early) return fit(S, horizons, tCut);
+      const rows = makeRows(S, early, spec.inputs, spec.h, tMid, end, Math.max(6, Math.min(spec.h, 24)));
+      const wts = ridge(rows, spec.inputs.map((_, j) => j));
+      if (!wts) return fit(S, horizons, tCut);
+      const models = fitAll(S, keys, hs, tCut);
+      if (!models) return fit(S, horizons, tCut);
+      return { type: 'ens', h: spec.h, inputs: spec.inputs, w: wts.w, b: wts.b, models, base: models.z };
+    }
+
+    // Prediction for stock `sid` at index i, from either kind of model.
+    function predictAt(M, S, sid, i, h) {
+      if (!M) return null;
+      const s = S[sid];
+      if (M.type !== 'ens' || h !== M.h) return predict(M.type === 'ens' ? M.base : M, sid, s.z[i], h);
+      let mean = M.b, se = 0, base = null;
+      const parts = [];
+      for (let k = 0; k < M.inputs.length; k++) {
+        const inp = M.inputs[k];
+        const p = predict(M.models[inp.key], sid, s[inp.key][i], inp.h);
+        if (!p) return predict(M.base, sid, s.z[i], h); // a signal isn't ready: fall back to the 7-day one
+        if (k === 0) base = p;
+        mean += M.w[k] * p.mean;
+        se += Math.abs(M.w[k]) * p.se; // conservative: assumes the errors line up
+        parts.push({ key: inp.key, h: inp.h, contrib: M.w[k] * p.mean });
+      }
+      return Object.assign({}, base, { mean, se: Math.max(se, base.se * 0.5), base: { mean: base.mean, win: base.win, nStock: base.nStock }, parts });
+    }
+
     // Out-of-sample information coefficient: does the model rank stocks correctly?
     function evaluateIC(S, model, h, tStart, tEnd) {
       const ics = [];
@@ -181,7 +378,7 @@
         for (const [sid, s] of Object.entries(S)) {
           const i = idxAt(s, t);
           if (i < 0 || i + h >= s.n) continue;
-          const p = predict(model, sid, s.z[i], h);
+          const p = predictAt(model, S, sid, i, h);
           if (!p) continue;
           P.push(p.mean); R.push(s.lp[i + h] - s.lp[i]);
         }
@@ -215,7 +412,7 @@
         const s = S[sid], i = idxAt(s, t);
         if (strategy === 'mom') return s.lp[i] - s.lp[i - SPAN];
         if (strategy === 'mr') return -(s.lp[i] - s.lp[i - SPAN]);
-        if (strategy === 'model') { const p = predict(model, sid, s.z[i], h); if (p) ses[sid] = p.se; return p ? p.mean : NaN; }
+        if (strategy === 'model') { const p = predictAt(model, S, sid, i, h); if (p) ses[sid] = p.se; return p ? p.mean : NaN; }
         return 0;
       };
       let units = {}, fees = 0, trades = 0, peak = 1, maxDD = 0, value = 1;
@@ -255,15 +452,37 @@
     }
 
     // Full validation: 70% train / 30% out-of-sample test.
-    function validate(S, horizons = [6, 24, 168]) {
+    async function validate(S, horizons = [6, 24, 168], opts = {}) {
+      const pause = opts.yieldFn || (() => null);
       const [a, b] = range(S);
       const span = (b - a) / HOUR;
       if (span < WARMUP + 24 * 60) return { ok: false, reason: `Need about ${Math.ceil((WARMUP + 24 * 60) / 24)} days of history; have ${Math.floor(span / 24)}.` };
       const tCut = a + Math.floor((a + (b - a) * 0.7 - a) / HOUR) * HOUR;
-      const model = fit(S, horizons, tCut);
-      if (!model) return { ok: false, reason: 'Not enough data to fit the model.' };
+      const baseModel = fit(S, horizons, tCut);
+      if (!baseModel) return { ok: false, reason: 'Not enough data to fit the model.' };
+      await pause();
       const res = { tCut, tEnd: b, testDays: Math.round((b - tCut) / 86400), horizons: {} };
       for (const h of horizons) {
+        // Try the smarter model; keep it only if it beats the basic one on the
+        // unseen test period on both ranking skill and backtest return.
+        let model = baseModel, spec = { kind: 'base' }, cmp = null;
+        const sel = await selectInputs(S, h, horizons, tCut, pause);
+        await pause();
+        if (sel && sel.inputs.length > 1) {
+          const ensSpec = { kind: 'ens', h, inputs: sel.inputs };
+          const ens = buildModel(S, ensSpec, horizons, tCut);
+          await pause();
+          if (ens && ens.type === 'ens') {
+            const icB = evaluateIC(S, baseModel, h, tCut, b - h * HOUR);
+            const icE = evaluateIC(S, ens, h, tCut, b - h * HOUR);
+            const btB = backtest(S, baseModel, { strategy: 'model', tStart: tCut, tEnd: b, h });
+            const btE = backtest(S, ens, { strategy: 'model', tStart: tCut, tEnd: b, h });
+            const wins = Number.isFinite(icE.t) && icE.t >= (icB.t || -99) && btE && btB && btE.ret >= btB.ret;
+            cmp = { inputs: sel.inputs, icBase: icB.t, icEns: icE.t, retBase: btB ? btB.ret : NaN, retEns: btE ? btE.ret : NaN, used: wins };
+            if (wins) { model = ens; spec = ensSpec; }
+          }
+        }
+        await pause();
         const ic = evaluateIC(S, model, h, tCut, b - h * HOUR);
         const bt = {};
         for (const st of ['bh', 'mom', 'mr', 'model']) bt[st] = backtest(S, model, { strategy: st, tStart: tCut, tEnd: b, h });
@@ -276,10 +495,11 @@
         // Pass: real ranking skill (t > 1.5), beats buy-and-hold after fees, and
         // still beats it in at least 5 of 9 different settings (not a lucky fluke).
         const passed = Number.isFinite(ic.t) && ic.t > 1.5 && beatsBH && tried > 0 && robust / tried >= 5 / 9;
-        res.horizons[h] = { ic, bt, robust, tried, passed };
+        res.horizons[h] = { ic, bt, robust, tried, passed, spec, cmp };
       }
       const best = horizons.map((h) => [h, res.horizons[h]]).sort((x, y) => (y[1].passed - x[1].passed) || ((y[1].ic.t || -99) - (x[1].ic.t || -99)))[0];
       res.h = best[0];
+      res.spec = best[1].spec;
       res.ok = best[1].passed;
       res.reason = res.ok ? '' : 'The model did not beat buy-and-hold reliably on data it had not seen.';
       res.ver = VAL_VER;
@@ -292,11 +512,11 @@
     // best, because the very best result on past data is partly luck.
     const TUNE_EDGES = [0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.005, 0.01];
     const TUNE_TS = [0, 0.8, 1.2, 2];
-    function tune(S, h = 24) {
+    function tune(S, h = 24, spec = null) {
       const [a, b] = range(S);
       if ((b - a) / HOUR < WARMUP + 24 * 60) return null;
       const tCut = a + Math.floor(((b - a) * 0.7) / HOUR) * HOUR;
-      const model = fit(S, [h], tCut);
+      const model = buildModel(S, spec, [h], tCut);
       if (!model) return null;
       const bh = backtest(S, model, { strategy: 'bh', tStart: tCut, tEnd: b, h });
       if (!bh) return null;
@@ -315,7 +535,7 @@
       const margin = Math.max(0.002, Math.abs(best.smooth) * 0.1);
       const near = rows.filter((r) => r.smooth >= best.smooth - margin);
       const rec = near.sort((x, y) => (y.minEdge - x.minEdge) || (y.tMin - x.tMin))[0];
-      return { h, testDays: Math.round((b - tCut) / 86400), bh, rows, best, rec, at: Date.now() };
+      return { h, sig: spec && spec.kind === 'ens' ? spec.inputs.map((x) => x.key + x.h).join(',') : 'base', testDays: Math.round((b - tCut) / 86400), bh, rows, best, rec, at: Date.now() };
     }
 
     // Market regime: current average volatility vs its own history.
@@ -382,7 +602,7 @@
       return best;
     }
 
-    return { TUNE_EDGES, TUNE_TS, VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, tune, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
+    return { SIGNAL_NAMES, buildModel, predictAt, selectInputs, TUNE_EDGES, TUNE_TS, VAL_VER, HOUR, FEE, SPAN, WARMUP, dense, features, prepare, fit, predict, binOf, evaluateIC, backtest, validate, tune, regime, protectedShares, nextBlockTarget, bestRotation, idxAt, range };
   })();
 
   if (typeof window === 'undefined') { if (typeof module !== 'undefined') module.exports = Core; return; }
@@ -395,12 +615,12 @@
   const PDA_KEY = '###PDA-APIKEY###'; // Torn PDA fills this in
   const STOCK_URL = 'https://www.torn.com/page.php?sid=stocks';
   const LS = 'tmm_';
-  const MODEL_VERSION = 'zbin-ensemble v1';
+  const MODEL_VERSION = 'zbin-ensemble v2';
 
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.9.1';
+  const SCRIPT_VERSION = '3.0.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -801,19 +1021,19 @@
       await yieldUI();
       let val = await DB.meta('validation', null);
       if (nS >= 5 && (!val || force || val.ver !== Core.VAL_VER || Date.now() - val.at > 6 * 3600000 || val.nStocks !== nS)) {
-        val = Core.validate(S);
+        val = await Core.validate(S, undefined, { yieldFn: yieldUI });
         val.at = Date.now(); val.nStocks = nS;
         await DB.setMeta('validation', val);
       }
       await yieldUI();
-      const model = nS >= 5 ? Core.fit(S, [6, 24, 168]) : null;
+      const model = nS >= 5 ? Core.buildModel(S, val && val.spec, [6, 24, 168]) : null;
       const h = val && val.h ? val.h : 24;
       const preds = {};
       for (const [sid, s] of Object.entries(S)) {
         const i = s.n - 1, z = s.z[i];
         let below = 0, tot = 0;
         for (let j = Core.WARMUP; j < s.n; j += 6) if (Number.isFinite(s.z[j])) { tot++; if (s.z[j] <= z) below++; }
-        preds[sid] = { z, pctile: tot ? below / tot : NaN, pred: model ? Core.predict(model, sid, z, h) : null, lastT: s.t0 + i * 3600 };
+        preds[sid] = { z, pctile: tot ? below / tot : NaN, pred: model ? Core.predictAt(model, S, sid, i, h) : null, lastT: s.t0 + i * 3600 };
       }
       const out = {
         t: Date.now(), S, val, model, h, preds, market,
@@ -911,6 +1131,13 @@
     return 'Light';
   }
 
+  const signalName = (x) => `${Core.SIGNAL_NAMES[x.key] || x.key}${x.key === 'z' ? ` (${hLabel(x.h)} view)` : ''}`;
+  const signalList = (arr) => [...new Set(arr.map(signalName))].join(', ');
+  function modelLabel(an) {
+    const sp = an.val && an.val.spec;
+    return sp && sp.kind === 'ens' ? `smarter model: 7-day normal price + ${signalList(sp.inputs.slice(1))}` : 'basic model: 7-day normal price';
+  }
+
   function whyLines(an, rot, L) {
     const A_ = L[rot.sell], B_ = L[rot.buy];
     const lines = [];
@@ -920,9 +1147,11 @@
       return `${x.s.acr} is ${Math.abs(x.z).toFixed(1)} standard deviations ${dir} its 7-day normal price${pc}.`;
     };
     const hist = (x) => {
-      const p = x.pred;
-      const src = p.nStock > 50 ? `${num(p.nStock)} hourly samples of ${x.s.acr}` : `mostly market-wide data (${x.s.acr} has few similar moments)`;
-      return `When ${x.s.acr} was in this range before, its next ${hLabel(an.h)} change averaged ${pct(p.mean)}, rising ${Math.round(p.win * 100)}% of the time (${src}).`;
+      const p = x.pred, b = p.base || p;
+      const src = b.nStock > 50 ? `${num(b.nStock)} hourly samples of ${x.s.acr}` : `mostly market-wide data (${x.s.acr} has few similar moments)`;
+      let line = `When ${x.s.acr} was in this range before, its next ${hLabel(an.h)} change averaged ${pct(b.mean)}, rising ${Math.round(b.win * 100)}% of the time (${src}).`;
+      if (p.parts && p.parts.length > 1) line += ` Other signals (${signalList(p.parts.slice(1))}) put it at ${pct(p.mean)}.`;
+      return line;
     };
     lines.push(desc(B_), hist(B_), desc(A_), hist(A_));
     lines.push(`Difference after the 0.1% selling fee: ${pct(rot.adv)} over ${hLabel(an.h)}s, about ${rot.t.toFixed(1)}× its uncertainty.`);
@@ -1718,7 +1947,7 @@
       ${updateInfo() ? `<div class="tmm-card opp"><b>Update available: v${esc(updateInfo().latest)}</b> <span class="tmm-sub">(you have v${SCRIPT_VERSION})</span>
         <div class="tmm-row"><button class="tmm-act" id="tmm-upd">Update now</button><button class="tmm-plain" id="tmm-upd-notes">What's new</button></div></div>` : ''}
       ${pocket}${card}${perf.html}
-      <div class="tmm-sub">Model: ${esc(MODEL_VERSION)} · ${an.validated ? `validated on ${hLabel(an.h)} horizon` : 'not validated'}${an.regime ? ' · market: ' + esc(an.regime.label) : ''}</div>`;
+      <div class="tmm-sub">Model: ${esc(modelLabel(an))} · ${an.validated ? `validated on ${hLabel(an.h)} horizon` : 'not validated'}${an.regime ? ' · market: ' + esc(an.regime.label) : ''}</div>`;
     const dep = $('#tmm-dep', body); if (dep) dep.onclick = () => runJob({ action: 'deposit' });
     const pc = $('#tmm-perf', body); if (pc) perf.wire(pc);
     const ub = $('#tmm-upd', body); if (ub) ub.onclick = installUpdate;
@@ -1768,12 +1997,13 @@
     const run = async () => {
       box.innerHTML = `<div class="tmm-sub">Testing ${Core.TUNE_EDGES.length * Core.TUNE_TS.length} combinations on past data… this can take a few seconds.</div>`;
       await sleep(50);
-      const r = Core.tune(an.S, an.h || 24);
+      const r = Core.tune(an.S, an.h || 24, an.val && an.val.spec);
       await DB.setMeta('tune', r);
       draw(r);
     };
     const cached = await DB.meta('tune', null);
-    if (cached && Date.now() - cached.at < 3 * 86400000 && cached.h === (an.h || 24)) draw(cached);
+    const sigNow = an.val && an.val.spec && an.val.spec.kind === 'ens' ? an.val.spec.inputs.map((x) => x.key + x.h).join(',') : 'base';
+    if (cached && Date.now() - cached.at < 3 * 86400000 && cached.h === (an.h || 24) && cached.sig === sigNow) draw(cached);
     else {
       box.innerHTML = `<div class="tmm-sub">Find out which minimum gain and evidence settings would have earned the most on data the model hadn't seen.</div><div class="tmm-row"><button class="tmm-act" id="tmm-tune-run">Run the tuner</button></div>`;
       $('#tmm-tune-run', box).onclick = run;
@@ -1792,7 +2022,8 @@
         html += `<div class="tmm-card"><b>${hLabel(+h)} horizon</b> ${r.passed ? '<span class="tmm-ok">passed</span>' : '<span class="tmm-warn">not passed</span>'}
           <div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Strategy</th><th>Return</th><th>Worst drop</th><th>Trades</th></tr>
           ${row('Buy and hold', r.bt.bh)}${row('Momentum', r.bt.mom)}${row('Simple mean reversion', r.bt.mr)}${row('This model', r.bt.model)}</table></div>
-          <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 2). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 2/3).</div></div>`;
+          <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 1.5). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 5 of 9).</div>
+          ${r.cmp ? `<div class="tmm-sub">Smarter model (adds ${esc(signalList(r.cmp.inputs.slice(1)))}): ranking skill ${Number.isFinite(r.cmp.icEns) ? r.cmp.icEns.toFixed(1) : '—'} vs ${Number.isFinite(r.cmp.icBase) ? r.cmp.icBase.toFixed(1) : '—'} basic, test return ${pctPlain(r.cmp.retEns)} vs ${pctPlain(r.cmp.retBase)}. ${r.cmp.used ? '<b>Using the smarter model.</b>' : 'Not better on both, so the basic model is used.'}</div>` : '<div class="tmm-sub">No extra signal helped on this horizon, so the basic model is used.</div>'}</div>`;
       }
     }
     html += `<h4>Best trade settings (threshold tuner)</h4><div id="tmm-tune"></div>`;

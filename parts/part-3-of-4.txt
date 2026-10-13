@@ -1,3 +1,52 @@
+  #tmm-root .tmm-act{background:var(--brass);color:var(--onbrass);border:0;border-radius:8px;padding:11px 16px;font-weight:700;font-size:15px;line-height:1;cursor:pointer}
+  #tmm-root .tmm-plain{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:10px 14px;font-size:14px;cursor:pointer}
+  #tmm-root .tmm-tabs{display:flex;gap:4px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
+  #tmm-root .tmm-tab{background:none;border:0;color:var(--muted);padding:8px 12px;font-weight:600;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+  #tmm-root .tmm-tab[aria-selected=true]{color:var(--head);border-bottom-color:var(--brass)}
+  #tmm-root .tmm-kpis{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+  #tmm-root .tmm-kpis b{display:block;font-size:17px;color:var(--head)} #tmm-root .tmm-kpis span{color:var(--muted);font-size:12px}
+  #tmm-root .tmm-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:transparent}
+  #tmm-root .tmm-tbl th,#tmm-root .tmm-tbl td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--ink);background:transparent}
+  #tmm-root .tmm-tbl th:first-child,#tmm-root .tmm-tbl td:first-child{text-align:left} #tmm-root .tmm-tbl th{color:var(--muted);font-weight:600}
+  #tmm-root .tmm-scroll{overflow-x:auto}
+  #tmm-root .tmm-field{margin:9px 0} #tmm-root .tmm-field label{display:block;color:var(--muted);margin-bottom:3px}
+  #tmm-root .tmm-field input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--field);color:var(--ink);font-size:15px}
+  #tmm-root .tmm-check{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--ink)}
+  #tmm-root .tmm-pos,#tmm-root .tmm-tbl td.tmm-pos,#tmm-root .tmm-kpis b.tmm-pos{color:var(--pos)} #tmm-root .tmm-neg,#tmm-root .tmm-tbl td.tmm-neg,#tmm-root .tmm-kpis b.tmm-neg{color:var(--neg)}
+  #tmm-root .tmm-chart-wrap{position:relative}
+  #tmm-root .tmm-chart{display:block;width:100%;height:auto;touch-action:pan-y}
+  #tmm-root .tmm-c-grid{stroke:var(--line);stroke-width:1}
+  #tmm-root .tmm-c-zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+  #tmm-root .tmm-c-ax{fill:var(--muted);font-size:10px}
+  #tmm-root .tmm-c-lab{fill:var(--ink);font-size:10px;font-weight:600}
+  #tmm-root .tmm-c-you{fill:none;stroke:var(--you);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  #tmm-root .tmm-c-mkt{fill:none;stroke:var(--mkt);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:5 3}
+  #tmm-root .tmm-c-x{stroke:var(--muted);stroke-width:1}
+  #tmm-root .tmm-c-tip{position:absolute;top:0;width:120px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;line-height:1.35;pointer-events:none;box-shadow:0 2px 8px var(--shadow)}
+  #tmm-root .tmm-c-legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:4px}
+  #tmm-root .tmm-c-sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--you);vertical-align:middle;margin-right:5px}
+  #tmm-root .tmm-c-sw.mkt{border-top:2px dashed var(--mkt)}
+  #tmm-root .tmm-chip[aria-pressed=true]{border-color:var(--brass);color:var(--head);font-weight:600}
+  #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
+  #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
+    background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
+  #tmm-root .tmm-pill.card{display:block;border-radius:14px;padding:6px 6px 8px 12px;width:calc(100vw - 20px);max-width:520px}
+  #tmm-root .tmm-pill-row{display:flex;gap:6px;align-items:center}
+  #tmm-root .tmm-pill-row .tmm-pill-t{flex:1}
+  #tmm-root .tmm-pill-info{margin:4px 6px 0 0;padding-left:16px;font-weight:400;font-size:12.5px;line-height:1.35;color:var(--muted)}
+  #tmm-root .tmm-pill-info li{margin:2px 0}
+  #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
+  #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  #tmm-root .tmm-pill button{white-space:nowrap}
+  #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
+  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
+  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
+  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
+  @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
+  @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
+
+  const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
+    <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
     <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
     <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
 
@@ -364,7 +413,7 @@
       ${updateInfo() ? `<div class="tmm-card opp"><b>Update available: v${esc(updateInfo().latest)}</b> <span class="tmm-sub">(you have v${SCRIPT_VERSION})</span>
         <div class="tmm-row"><button class="tmm-act" id="tmm-upd">Update now</button><button class="tmm-plain" id="tmm-upd-notes">What's new</button></div></div>` : ''}
       ${pocket}${card}${perf.html}
-      <div class="tmm-sub">Model: ${esc(MODEL_VERSION)} · ${an.validated ? `validated on ${hLabel(an.h)} horizon` : 'not validated'}${an.regime ? ' · market: ' + esc(an.regime.label) : ''}</div>`;
+      <div class="tmm-sub">Model: ${esc(modelLabel(an))} · ${an.validated ? `validated on ${hLabel(an.h)} horizon` : 'not validated'}${an.regime ? ' · market: ' + esc(an.regime.label) : ''}</div>`;
     const dep = $('#tmm-dep', body); if (dep) dep.onclick = () => runJob({ action: 'deposit' });
     const pc = $('#tmm-perf', body); if (pc) perf.wire(pc);
     const ub = $('#tmm-upd', body); if (ub) ub.onclick = installUpdate;
@@ -414,12 +463,13 @@
     const run = async () => {
       box.innerHTML = `<div class="tmm-sub">Testing ${Core.TUNE_EDGES.length * Core.TUNE_TS.length} combinations on past data… this can take a few seconds.</div>`;
       await sleep(50);
-      const r = Core.tune(an.S, an.h || 24);
+      const r = Core.tune(an.S, an.h || 24, an.val && an.val.spec);
       await DB.setMeta('tune', r);
       draw(r);
     };
     const cached = await DB.meta('tune', null);
-    if (cached && Date.now() - cached.at < 3 * 86400000 && cached.h === (an.h || 24)) draw(cached);
+    const sigNow = an.val && an.val.spec && an.val.spec.kind === 'ens' ? an.val.spec.inputs.map((x) => x.key + x.h).join(',') : 'base';
+    if (cached && Date.now() - cached.at < 3 * 86400000 && cached.h === (an.h || 24) && cached.sig === sigNow) draw(cached);
     else {
       box.innerHTML = `<div class="tmm-sub">Find out which minimum gain and evidence settings would have earned the most on data the model hadn't seen.</div><div class="tmm-row"><button class="tmm-act" id="tmm-tune-run">Run the tuner</button></div>`;
       $('#tmm-tune-run', box).onclick = run;
@@ -438,7 +488,8 @@
         html += `<div class="tmm-card"><b>${hLabel(+h)} horizon</b> ${r.passed ? '<span class="tmm-ok">passed</span>' : '<span class="tmm-warn">not passed</span>'}
           <div class="tmm-scroll"><table class="tmm-tbl"><tr><th>Strategy</th><th>Return</th><th>Worst drop</th><th>Trades</th></tr>
           ${row('Buy and hold', r.bt.bh)}${row('Momentum', r.bt.mom)}${row('Simple mean reversion', r.bt.mr)}${row('This model', r.bt.model)}</table></div>
-          <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 2). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 2/3).</div></div>`;
+          <div class="tmm-sub">Ranking skill t = ${Number.isFinite(r.ic.t) ? r.ic.t.toFixed(1) : '—'} (needs &gt; 1.5). Beat buy-and-hold with ${r.robust} of ${r.tried} different settings (needs 5 of 9).</div>
+          ${r.cmp ? `<div class="tmm-sub">Smarter model (adds ${esc(signalList(r.cmp.inputs.slice(1)))}): ranking skill ${Number.isFinite(r.cmp.icEns) ? r.cmp.icEns.toFixed(1) : '—'} vs ${Number.isFinite(r.cmp.icBase) ? r.cmp.icBase.toFixed(1) : '—'} basic, test return ${pctPlain(r.cmp.retEns)} vs ${pctPlain(r.cmp.retBase)}. ${r.cmp.used ? '<b>Using the smarter model.</b>' : 'Not better on both, so the basic model is used.'}</div>` : '<div class="tmm-sub">No extra signal helped on this horizon, so the basic model is used.</div>'}</div>`;
       }
     }
     html += `<h4>Best trade settings (threshold tuner)</h4><div id="tmm-tune"></div>`;
@@ -484,47 +535,3 @@
       ${f('s-keep', 'Keep this much cash on hand after a deposit', short(settings.keepOnHand))}
       ${f('s-park', 'Parking stock (used while the model is learning)', settings.parkStock, 'e.g. TCI')}
       ${f('s-ex', 'Never trade these stocks', settings.exclude, 'e.g. WSU, TCB')}
-      ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
-      ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
-      ${c('s-vault', 'Offer faction vault deposits (only shown if you are in a faction)', settings.factionVault)}
-      ${f('s-church', 'Church limit: only suggest donating amounts up to this, and only when it can\'t buy a single share', short(settings.churchMax))}
-      <h4>Recommendations</h4>
-      ${f('s-edge', 'Minimum advantage after fees (%)', settings.minEdgePct)}
-      ${f('s-t', 'Evidence required (how many times bigger than the uncertainty)', settings.evidenceT)}
-      ${f('s-maxw', 'Most of your portfolio in one stock (%)', settings.maxWeightPct)}
-      ${f('s-mint', 'Smallest trade worth suggesting', short(settings.minTrade))}
-      ${c('s-unval', 'Show recommendations even if the model fails its test (not advised)', settings.showUnvalidated)}
-      <h4>Data and display</h4>
-      ${f('s-days', 'Days of history to download', settings.historyDays)}
-      ${c('s-open', 'Open the trade panel for me', settings.autoOpen)}
-      <div class="tmm-row"><button class="tmm-plain" id="s-moon">Move the moon back to its default spot</button></div>
-      <h4>Updates</h4>
-      <div class="tmm-sub" id="s-ver">You have v${SCRIPT_VERSION}.${updateConfigured() ? '' : ' Update checks are off until the GitHub link is set in the script.'}</div>
-      <div class="tmm-row">${updateConfigured() ? '<button class="tmm-plain" id="s-chk">Check for updates</button>' : ''}</div>
-      <div class="tmm-row"><button class="tmm-act" id="s-save">Save settings</button></div>`;
-    const chk = $('#s-chk', body);
-    if (chk) chk.onclick = async () => {
-      chk.textContent = 'Checking…';
-      const u = await checkForUpdate(true);
-      const v = $('#s-ver', body);
-      if (u) {
-        v.innerHTML = `Update available: <b>v${esc(u.latest)}</b> (you have v${SCRIPT_VERSION}).`;
-        chk.textContent = 'Update now'; chk.className = 'tmm-act'; chk.onclick = installUpdate;
-      } else {
-        const s = store.get('update', null);
-        v.textContent = s && s.err ? `Couldn't reach GitHub: ${s.err}` : `You have the latest version (v${SCRIPT_VERSION}).`;
-        chk.textContent = 'Check again';
-      }
-    };
-    $('#s-moon', body).onclick = () => { store.set('dock', { edge: 'right', pos: 0.72 }); placeMoon(); };
-    $('#s-save', body).onclick = () => {
-      const g = (id) => $('#' + id, body).value.trim();
-      const n = (id, d, lo, hi) => { const x = parseFloat(g(id)); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
-      if (!pda) settings.apiKey = g('s-key');
-      const keep = parseAmount(g('s-keep')); settings.keepOnHand = keep > 0 ? keep : 0;
-      settings.parkStock = g('s-park').toUpperCase();
-      settings.exclude = g('s-ex');
-      settings.bufferPct = n('s-buf', DEFAULTS.bufferPct, 0, 5);
-      settings.depositOwnedOnly = $('#s-own', body).checked;
-      settings.factionVault = $('#s-vault', body).checked;
-      const cm = parseAmount(g('s-church')); settings.churchMax = cm >= 0 ? cm : DEFAULTS.churchMax;
