@@ -18,6 +18,19 @@ It fills in the numbers. **You always press Torn's own Buy, Sell or give button.
 
 *Early days: this is about 10 days of data, and past results don't guarantee future ones.*
 
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="screenshots/withdraw-in-profit.jpg" alt="Withdraw card: Sell 4 TCC. At about $524.77 you get about $2,097 after the 0.1% fee. TCC has the weakest expected 7-day return of your options. You paid about $513.39 a share, so this sells at +2.11% after the fee: no loss. Torn's Sell box below shows 4.">
+<p><b>Withdraw.</b> It picks a stock that's worth more than you paid, even after the fee, fills in the exact share count, and tells you why. You tap Sell.</p>
+</td>
+<td width="50%" valign="top">
+<img src="screenshots/deposit.jpg" alt="Deposit card: Buy 2 WLT, with a Vault instead button. At about $806.24 this uses about $1,612 and leaves $484 on hand. WLT has the strongest expected 7-day return of your options. You own 3,328 WLT at an average of $805.59. Torn's Buy box below shows 2.">
+<p><b>Deposit.</b> It buys the stock with the best outlook, shows your average price paid, and offers the faction vault instead. You tap Buy.</p>
+</td>
+</tr>
+</table>
+
 ---
 
 ## Features
