@@ -1,3 +1,13 @@
+  }
+  async function updateBadges() {
+    try {
+      if (!apiKey()) return;
+      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
+      updateCashBadge();
+      if (!userMem) return;
+      const an = await analyze();
+      let has = false;
+      if (an.market && (an.validated || settings.showUnvalidated)) {
         const { rot } = findOpportunity(an, userMem, cashNow() ?? userMem.cash);
         const skip = store.get('skip', null);
         has = !!rot && !(skip && skip.k === rot.sell + '>' + rot.buy && Date.now() < skip.until);

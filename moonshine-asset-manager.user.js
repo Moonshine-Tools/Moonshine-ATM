@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.7.1
+// @version      2.7.2
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.7.1';
+  const SCRIPT_VERSION = '2.7.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1078,13 +1078,35 @@
     return null;
   }
 
+  // After a trade, Torn replaces the Buy/Sell box with "You have sold… [BACK]"
+  // (or "Do you want to sell…? [BACK] [CONFIRM]" if one was left unconfirmed).
+  // Tapping BACK just returns to the normal boxes; it never trades anything.
+  // We only ever tap a button labelled exactly "Back" inside one of those messages.
+  function clearStaleResult(row) {
+    let clicked = false;
+    for (const root of panelScope(row)) {
+      for (const b of $$("button, a, [role=button], input[type=button]", root)) {
+        if (b.closest('#tmm-root') || b.offsetParent === null || !/^back$/i.test(elText(b))) continue;
+        let el = b.parentElement, inMessage = false;
+        for (let d = 0; el && d < 4 && el !== root.parentElement; d++, el = el.parentElement) {
+          if (/you have (bought|sold)|do you want to (buy|sell)/i.test(elText(el))) { inMessage = true; break; }
+        }
+        if (inMessage) { try { b.click(); clicked = true; } catch (e) { /* ignore */ } }
+      }
+    }
+    return clicked;
+  }
+
   async function openAndFill(stockId, action, shares) {
     const row = await waitFor(() => findRow(stockId), 6000);
     if (!row) return { res: 'missing' };
     row.scrollIntoView({ block: 'center', behavior: 'smooth' });
     let input = findTradeInput(row, action);
+    // Panel already open but showing the last trade's result: tap BACK first.
+    if (!input && clearStaleResult(row)) input = await waitFor(() => findTradeInput(row, action), 3000);
     if (!input && settings.autoOpen) safeOpenPanel(row);
     input = input || (await waitFor(() => findTradeInput(row, action), settings.autoOpen ? 4000 : 20000));
+    if (!input && clearStaleResult(row)) input = await waitFor(() => findTradeInput(row, action), 3000);
     if (!input) return { res: 'missing' };
     const ok = await typeInto(input, shares);
     input.classList.add('tmm-filled');
