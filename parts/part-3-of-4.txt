@@ -1,11 +1,3 @@
-      if (!drag.moved) { drag.moved = true; moon.classList.add('dragging'); hideMenu(); }
-      moon.style.left = (e.clientX - MOON / 2) + 'px';
-      moon.style.top = (e.clientY - MOON / 2) + 'px';
-      e.preventDefault();
-    });
-    moon.addEventListener('pointerup', (e) => {
-      if (!drag) return;
-      const moved = drag.moved;
       drag = null;
       moon.classList.remove('dragging');
       if (moved) snapMoon(e.clientX, e.clientY);
@@ -655,8 +647,13 @@
       }
     }
     const days = (now - Math.max(from, firstSeen)) / 86400000;
-    // $5M always stays for see-sawing, plus the most you've drawn, rounded up to the next $1M.
-    const rec = Math.ceil((KEEP_MIN + used) / 1e6) * 1e6;
+    // Your cost of living: average withdrawals per week (at least a week of data).
+    // Cover the whole bank term with 50% to spare, or the most you've drawn at once
+    // if that's bigger, plus $5M that always stays for see-sawing. Rounded up to $1M.
+    const weekly = wd / (Math.max(days, 7) / 7);
+    const termWeeks = Math.max(1, Math.floor(r.days / 7));
+    const need = weekly * 1.5 * termWeeks;
+    const rec = Math.ceil((KEEP_MIN + Math.max(used, need)) / 1e6) * 1e6;
     // Growth of your stocks from price changes over the last week and 2 months.
     const growth = [];
     if (an && an.S) {
@@ -667,3 +664,4 @@
         if (sn.length < 2) continue;
         let g = 0;
         for (let k = 1; k < sn.length; k++) for (const [sid, sh] of Object.entries(sn[k - 1].holdings || {})) { const dd = px(sid, sn[k].t) - px(sid, sn[k - 1].t); if (Number.isFinite(dd)) g += sh * dd; }
+        let v0 = 0; for (const [sid, sh] of Object.entries(sn[0].holdings || {})) { const q = px(sid, sn[0].t); if (Number.isFinite(q)) v0 += sh * q; }

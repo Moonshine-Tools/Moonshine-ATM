@@ -1,9 +1,8 @@
-        let v0 = 0; for (const [sid, sh] of Object.entries(sn[0].holdings || {})) { const q = px(sid, sn[0].t); if (Number.isFinite(q)) v0 += sh * q; }
         const have = (now - sn[0].t * 1000) / 86400000;
         growth.push({ label: have < d - 1 ? `${label} (${Math.max(1, Math.round(have))} days of data)` : label, gain: g, pct: v0 > 0 ? g / v0 : null });
       }
     }
-    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, any: ev.length > 0 };
+    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, weekly, termWeeks, need, termName: TERM_NAME[r.term], any: ev.length > 0 };
   }
 
   function walletCard(W) {
@@ -14,19 +13,22 @@
     let advice;
     if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
     else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
-    else advice = `<div class="tmm-sub">You've drawn at most <b>${money(W.used)}</b> of the ${money(keep)} you keep in stocks. ${W.rec > keep ? 'Raise' : 'Lower'} it to <b>${money(W.rec)}</b>${W.rec > keep ? ' so you have room to spare' : ' and move the rest to the bank'}: ${money(KEEP_MIN)} for trading plus what you use.</div>
+    else advice = `<div class="tmm-sub">${W.need >= W.used
+          ? `You withdraw about <b>${money(W.weekly)}</b> a week. Covering a ${W.termName} term (${W.termWeeks} week${W.termWeeks > 1 ? 's' : ''}) with 50% to spare takes ${money(W.need)}.`
+          : `You've drawn up to <b>${money(W.used)}</b> at once.`} With ${money(KEEP_MIN)} for trading, ${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
         <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
     return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
       <table class="tmm-tbl">
         ${kv(`Deposits (${W.depN})`, money(W.dep))}
         ${kv(`Withdrawals (${W.wdN})`, money(W.wd))}
+        ${kv('Withdrawn per week (average)', money(W.weekly))}
         ${kv('Most drawn at once', money(W.used))}
         ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
         ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
       </table>
       ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
       ${advice}
-      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus the most you've drawn, rounded up to the next $1M.</div></div>`;
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), rounded up to the next $1M.</div></div>`;
   }
 
   async function showAdvisor() {

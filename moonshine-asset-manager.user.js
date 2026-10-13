@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.3.1
+// @version      3.4.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.3.1';
+  const SCRIPT_VERSION = '3.4.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -2357,8 +2357,13 @@
       }
     }
     const days = (now - Math.max(from, firstSeen)) / 86400000;
-    // $5M always stays for see-sawing, plus the most you've drawn, rounded up to the next $1M.
-    const rec = Math.ceil((KEEP_MIN + used) / 1e6) * 1e6;
+    // Your cost of living: average withdrawals per week (at least a week of data).
+    // Cover the whole bank term with 50% to spare, or the most you've drawn at once
+    // if that's bigger, plus $5M that always stays for see-sawing. Rounded up to $1M.
+    const weekly = wd / (Math.max(days, 7) / 7);
+    const termWeeks = Math.max(1, Math.floor(r.days / 7));
+    const need = weekly * 1.5 * termWeeks;
+    const rec = Math.ceil((KEEP_MIN + Math.max(used, need)) / 1e6) * 1e6;
     // Growth of your stocks from price changes over the last week and 2 months.
     const growth = [];
     if (an && an.S) {
@@ -2374,7 +2379,7 @@
         growth.push({ label: have < d - 1 ? `${label} (${Math.max(1, Math.round(have))} days of data)` : label, gain: g, pct: v0 > 0 ? g / v0 : null });
       }
     }
-    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, any: ev.length > 0 };
+    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, weekly, termWeeks, need, termName: TERM_NAME[r.term], any: ev.length > 0 };
   }
 
   function walletCard(W) {
@@ -2385,19 +2390,22 @@
     let advice;
     if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
     else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
-    else advice = `<div class="tmm-sub">You've drawn at most <b>${money(W.used)}</b> of the ${money(keep)} you keep in stocks. ${W.rec > keep ? 'Raise' : 'Lower'} it to <b>${money(W.rec)}</b>${W.rec > keep ? ' so you have room to spare' : ' and move the rest to the bank'}: ${money(KEEP_MIN)} for trading plus what you use.</div>
+    else advice = `<div class="tmm-sub">${W.need >= W.used
+          ? `You withdraw about <b>${money(W.weekly)}</b> a week. Covering a ${W.termName} term (${W.termWeeks} week${W.termWeeks > 1 ? 's' : ''}) with 50% to spare takes ${money(W.need)}.`
+          : `You've drawn up to <b>${money(W.used)}</b> at once.`} With ${money(KEEP_MIN)} for trading, ${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
         <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
     return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
       <table class="tmm-tbl">
         ${kv(`Deposits (${W.depN})`, money(W.dep))}
         ${kv(`Withdrawals (${W.wdN})`, money(W.wd))}
+        ${kv('Withdrawn per week (average)', money(W.weekly))}
         ${kv('Most drawn at once', money(W.used))}
         ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
         ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
       </table>
       ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
       ${advice}
-      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus the most you've drawn, rounded up to the next $1M.</div></div>`;
+      <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is ${money(KEEP_MIN)} for trading plus your weekly withdrawals × 1.5 × the weeks in your bank term (or the most you've drawn at once, if bigger), rounded up to the next $1M.</div></div>`;
   }
 
   async function showAdvisor() {

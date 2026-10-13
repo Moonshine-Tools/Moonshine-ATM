@@ -1,6 +1,3 @@
-    } catch (e) { /* rate unknown; the advisor asks for it */ }
-    try {
-      const j = await api('user/?selections=merits');
       const m = j.merits || {};
       merits = Number(m['Bank Interest'] ?? m.bank_interest ?? m.bankInterest) || 0;
     } catch (e) { /* keep the last known value */ }
@@ -796,3 +793,11 @@
     moon.addEventListener('pointermove', (e) => {
       if (!drag) return;
       if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
+      if (!drag.moved) { drag.moved = true; moon.classList.add('dragging'); hideMenu(); }
+      moon.style.left = (e.clientX - MOON / 2) + 'px';
+      moon.style.top = (e.clientY - MOON / 2) + 'px';
+      e.preventDefault();
+    });
+    moon.addEventListener('pointerup', (e) => {
+      if (!drag) return;
+      const moved = drag.moved;
