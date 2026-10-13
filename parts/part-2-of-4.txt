@@ -1,10 +1,3 @@
-            if (!st.newest || nowSec - st.newest > 3600) {
-              const url = st.newest ? `${base}&from=${st.newest}` : base;
-              const j = await httpGetJSON(url);
-              pts = (j.data || []).map((r) => [Number(r[0]), Number(r[4])]);
-              if (pts.length) {
-                st.newest = Math.max(st.newest || 0, pts[pts.length - 1][0]);
-                st.oldest = Math.min(st.oldest || Infinity, pts[0][0]);
               }
               await sleep(1100);
             }
@@ -376,19 +369,40 @@
   // (or "Do you want to sell…? [BACK] [CONFIRM]" if one was left unconfirmed).
   // Tapping BACK just returns to the normal boxes; it never trades anything.
   // We only ever tap a button labelled exactly "Back" inside one of those messages.
-  function clearStaleResult(row) {
-    let clicked = false;
+  // BACK buttons that belong to a finished ("You have sold…") or pending
+  // ("Do you want to sell…?") trade message in this stock's panel.
+  function resultBackButtons(row, finishedOnly = false) {
+    const out = [];
+    const re = finishedOnly ? /you have (bought|sold)/i : /you have (bought|sold)|do you want to (buy|sell)/i;
     for (const root of panelScope(row)) {
       for (const b of $$("button, a, [role=button], input[type=button]", root)) {
         if (b.closest('#tmm-root') || b.offsetParent === null || !/^back$/i.test(elText(b))) continue;
-        let el = b.parentElement, inMessage = false;
+        let el = b.parentElement;
         for (let d = 0; el && d < 4 && el !== root.parentElement; d++, el = el.parentElement) {
-          if (/you have (bought|sold)|do you want to (buy|sell)/i.test(elText(el))) { inMessage = true; break; }
+          if (re.test(elText(el))) { out.push(b); break; }
         }
-        if (inMessage) { try { b.click(); clicked = true; } catch (e) { /* ignore */ } }
       }
     }
+    return out;
+  }
+  function clearStaleResult(row) {
+    let clicked = false;
+    for (const b of resultBackButtons(row)) { try { b.click(); clicked = true; } catch (e) { /* ignore */ } }
     return clicked;
+  }
+
+  // After a trade goes through, Torn shows "You have sold… [BACK]". Ask the
+  // player to tap BACK (highlighted) and wait for it before moving on, so the
+  // next step finds Torn's normal Buy/Sell boxes. Gives up after 3 minutes.
+  async function waitForBack(stockId, onWaiting) {
+    const row = findRow(stockId);
+    if (!row) return;
+    const btns = await waitFor(() => { const b = resultBackButtons(row, true); return b.length ? b : null; }, 2500, 200);
+    if (!btns) return; // Torn showed no result message
+    btns.forEach((b) => b.classList.add('tmm-backhint'));
+    try { btns[0].scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* ignore */ }
+    onWaiting();
+    await waitFor(() => !resultBackButtons(row, true).length, 3 * 60000, 300);
   }
 
   async function openAndFill(stockId, action, shares) {
@@ -580,5 +594,3 @@
   #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   #tmm-root .tmm-pill button{white-space:nowrap}
   #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
-  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}

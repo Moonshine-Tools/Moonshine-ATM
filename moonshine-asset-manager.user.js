@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.7.2
+// @version      2.8.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.7.2';
+  const SCRIPT_VERSION = '2.8.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1082,19 +1082,40 @@
   // (or "Do you want to sell…? [BACK] [CONFIRM]" if one was left unconfirmed).
   // Tapping BACK just returns to the normal boxes; it never trades anything.
   // We only ever tap a button labelled exactly "Back" inside one of those messages.
-  function clearStaleResult(row) {
-    let clicked = false;
+  // BACK buttons that belong to a finished ("You have sold…") or pending
+  // ("Do you want to sell…?") trade message in this stock's panel.
+  function resultBackButtons(row, finishedOnly = false) {
+    const out = [];
+    const re = finishedOnly ? /you have (bought|sold)/i : /you have (bought|sold)|do you want to (buy|sell)/i;
     for (const root of panelScope(row)) {
       for (const b of $$("button, a, [role=button], input[type=button]", root)) {
         if (b.closest('#tmm-root') || b.offsetParent === null || !/^back$/i.test(elText(b))) continue;
-        let el = b.parentElement, inMessage = false;
+        let el = b.parentElement;
         for (let d = 0; el && d < 4 && el !== root.parentElement; d++, el = el.parentElement) {
-          if (/you have (bought|sold)|do you want to (buy|sell)/i.test(elText(el))) { inMessage = true; break; }
+          if (re.test(elText(el))) { out.push(b); break; }
         }
-        if (inMessage) { try { b.click(); clicked = true; } catch (e) { /* ignore */ } }
       }
     }
+    return out;
+  }
+  function clearStaleResult(row) {
+    let clicked = false;
+    for (const b of resultBackButtons(row)) { try { b.click(); clicked = true; } catch (e) { /* ignore */ } }
     return clicked;
+  }
+
+  // After a trade goes through, Torn shows "You have sold… [BACK]". Ask the
+  // player to tap BACK (highlighted) and wait for it before moving on, so the
+  // next step finds Torn's normal Buy/Sell boxes. Gives up after 3 minutes.
+  async function waitForBack(stockId, onWaiting) {
+    const row = findRow(stockId);
+    if (!row) return;
+    const btns = await waitFor(() => { const b = resultBackButtons(row, true); return b.length ? b : null; }, 2500, 200);
+    if (!btns) return; // Torn showed no result message
+    btns.forEach((b) => b.classList.add('tmm-backhint'));
+    try { btns[0].scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* ignore */ }
+    onWaiting();
+    await waitFor(() => !resultBackButtons(row, true).length, 3 * 60000, 300);
   }
 
   async function openAndFill(stockId, action, shares) {
@@ -1287,6 +1308,7 @@
   #tmm-root .tmm-pill button{white-space:nowrap}
   #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
   #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
+  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
   input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
   @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
   @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
@@ -2250,6 +2272,14 @@
         status.className = 'tmm-ok';
         status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}.`;
         userMem = null;
+        const waitSheet = sheet;
+        await waitForBack(stock.id, () => {
+          const msg = `✓ ${isSell ? 'Sold' : 'Bought'} · now tap BACK in Torn's panel`;
+          status.innerHTML = `${isSell ? 'Sold' : 'Bought'}. Cash on hand: ${money(cash)}. <b>Now tap Torn's BACK button</b> (highlighted) to continue.`;
+          if (sheet && sheet.style.display === 'none') showPill(msg, 'ok');
+          else if (sheet) minimizeSheet(msg);
+        });
+        if (sheet !== waitSheet) return; // closed or replaced while waiting
         const next = onDone ? await onDone(cash, status) : false;
         if (next === true) { expandSheet(); return; }
         const doneSheet = sheet;

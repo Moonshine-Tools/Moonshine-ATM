@@ -1,3 +1,6 @@
+  #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
+  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
+  input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
   @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
   @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
 
@@ -511,3 +514,8 @@
     const note = $('[data-note="cash"]', root);
     if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
     moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
+  }
+  async function updateBadges() {
+    try {
+      if (!apiKey()) return;
+      if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
