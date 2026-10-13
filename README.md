@@ -216,6 +216,7 @@ Everyone running the script will see the update within 6 hours. If the version n
 ## Roadmap
 
 - [ ] Put a value on stock benefits in trade decisions
+- [ ] Quick deposit to your home (property) vault. On hold until I have a property with a vault to build and test it on.
 
 ---
 
