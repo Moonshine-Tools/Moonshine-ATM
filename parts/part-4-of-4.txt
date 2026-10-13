@@ -1,6 +1,3 @@
-    const note = $('[data-note="cash"]', root);
-    if (note) note.textContent = has ? `(${money(cash)} on hand)` : '';
-    moon.setAttribute('aria-label', 'Moonshine Asset Manager menu' + (has ? ', carrying cash' : '') + (moon.classList.contains('has-opp') ? ', trade idea available' : ''));
   }
   async function updateBadges() {
     try {
@@ -114,7 +111,11 @@
   // ------------------------------------------------------------ cash leftovers
   const vaultAvailable = () => settings.factionVault && !!userMem && userMem.factionId > 0 &&
     !/hospital|jail|travel|abroad|federal/i.test(userMem.state || '');
-  const churchOk = (amt) => amt >= 1 && amt <= settings.churchMax;
+  // The church gives money away for good, so it's a last resort: only for small
+  // amounts that can't buy even one share of any stock. A cheap share keeps the
+  // money and only costs the 0.1% fee when you sell it.
+  const canBuyAShare = (amt) => { const c = cheapestAllowedPrice(); return c != null && amt >= c * (1 + settings.bufferPct / 100); };
+  const churchOk = (amt) => amt >= 1 && amt <= settings.churchMax && !canBuyAShare(amt);
   function placeOptions(amt) {
     const out = [];
     if (vaultAvailable()) out.push({ label: 'Faction vault', long: `Deposit ${money(amt)} to the faction vault`, fn: () => startVaultDeposit(amt) });
@@ -139,8 +140,9 @@
       };
     }
     if (plan.noGood) {
-      const ex = placeOptions(left);
-      return { text: `✓ Bought · no good buys for the last ${money(left)}`, extras: ex.length ? ex : [{ label: `Buy ${plan.best.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [plan.best] }), 0, 'buy') }] };
+      // Vault first (keeps the money); otherwise buying anyway beats giving it away.
+      const buyAnyway = { label: `Buy ${plan.best.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [plan.best] }), 0, 'buy') };
+      return { text: `✓ Bought · no good buys for the last ${money(left)}`, extras: [...placeOptions(left), buyAnyway] };
     }
     return { text: `✓ Bought · ${money(left)} left`, extras: placeOptions(left) };
   }
@@ -154,7 +156,7 @@
       <div class="tmm-sub">Every stock you can buy is expected to fall or would put too much in one stock. The best option, ${esc(o.s.acr)}, is expected to change ${o.pred ? pct(o.pred.mean) : '—'} over ${hLabel(A ? A.h : 24)}.</div>
       <div class="tmm-big">${money(amt)} to put away</div>
       <div class="tmm-row" id="tmm-ng"></div>
-      ${!opts.length && amt > settings.churchMax ? `<div class="tmm-sub">Buying anyway keeps your money safe in stocks; you only pay the 0.1% fee when you sell.</div>` : ''}
+      <div class="tmm-sub">Buying anyway keeps your money safe in stocks; you only pay the 0.1% fee when you sell.</div>
       <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
     const row = $('#tmm-ng', s);
     const all = [...opts, { label: `Buy ${num(o.shares)} ${o.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [o] }), 0, 'buy') }];

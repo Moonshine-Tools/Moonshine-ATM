@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.5.2
+// @version      2.6.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.5.2';
+  const SCRIPT_VERSION = '2.6.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -377,7 +377,7 @@
     exclude: '',
     depositOwnedOnly: false,
     factionVault: true,
-    churchMax: 100000,
+    churchMax: 500,
     autoOpen: true,
     historyDays: 730,
     minEdgePct: 0.25,
@@ -391,11 +391,13 @@
     get(k, d) { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
   };
-  const SETTINGS_VER = 2;
+  const SETTINGS_VER = 3;
   let settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
   if ((settings.ver || 1) < SETTINGS_VER) {
     // v2: trade more often for smaller gains. Reset the trade thresholds once.
-    for (const k of ['minEdgePct', 'evidenceT', 'minTrade']) settings[k] = DEFAULTS[k];
+    if ((settings.ver || 1) < 2) for (const k of ['minEdgePct', 'evidenceT', 'minTrade']) settings[k] = DEFAULTS[k];
+    // v3: the church is a last resort, so its default limit drops to $500.
+    if ((settings.ver || 1) < 3 && settings.churchMax === 100000) settings.churchMax = DEFAULTS.churchMax;
     settings.ver = SETTINGS_VER;
     try { localStorage.setItem(LS + 'settings', JSON.stringify(settings)); } catch (e) { /* ignore */ }
   }
@@ -1685,7 +1687,7 @@
       ${f('s-buf', 'Price safety margin (%)', settings.bufferPct)}
       ${c('s-own', 'Only deposit into stocks I already own', settings.depositOwnedOnly)}
       ${c('s-vault', 'Offer faction vault deposits (only shown if you are in a faction)', settings.factionVault)}
-      ${f('s-church', 'Only suggest the church for amounts up to', short(settings.churchMax))}
+      ${f('s-church', 'Church limit: only suggest donating amounts up to this, and only when it can\'t buy a single share', short(settings.churchMax))}
       <h4>Recommendations</h4>
       ${f('s-edge', 'Minimum advantage after fees (%)', settings.minEdgePct)}
       ${f('s-t', 'Evidence required (how many times bigger than the uncertainty)', settings.evidenceT)}
@@ -1863,7 +1865,11 @@
   // ------------------------------------------------------------ cash leftovers
   const vaultAvailable = () => settings.factionVault && !!userMem && userMem.factionId > 0 &&
     !/hospital|jail|travel|abroad|federal/i.test(userMem.state || '');
-  const churchOk = (amt) => amt >= 1 && amt <= settings.churchMax;
+  // The church gives money away for good, so it's a last resort: only for small
+  // amounts that can't buy even one share of any stock. A cheap share keeps the
+  // money and only costs the 0.1% fee when you sell it.
+  const canBuyAShare = (amt) => { const c = cheapestAllowedPrice(); return c != null && amt >= c * (1 + settings.bufferPct / 100); };
+  const churchOk = (amt) => amt >= 1 && amt <= settings.churchMax && !canBuyAShare(amt);
   function placeOptions(amt) {
     const out = [];
     if (vaultAvailable()) out.push({ label: 'Faction vault', long: `Deposit ${money(amt)} to the faction vault`, fn: () => startVaultDeposit(amt) });
@@ -1888,8 +1894,9 @@
       };
     }
     if (plan.noGood) {
-      const ex = placeOptions(left);
-      return { text: `✓ Bought · no good buys for the last ${money(left)}`, extras: ex.length ? ex : [{ label: `Buy ${plan.best.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [plan.best] }), 0, 'buy') }] };
+      // Vault first (keeps the money); otherwise buying anyway beats giving it away.
+      const buyAnyway = { label: `Buy ${plan.best.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [plan.best] }), 0, 'buy') };
+      return { text: `✓ Bought · no good buys for the last ${money(left)}`, extras: [...placeOptions(left), buyAnyway] };
     }
     return { text: `✓ Bought · ${money(left)} left`, extras: placeOptions(left) };
   }
@@ -1903,7 +1910,7 @@
       <div class="tmm-sub">Every stock you can buy is expected to fall or would put too much in one stock. The best option, ${esc(o.s.acr)}, is expected to change ${o.pred ? pct(o.pred.mean) : '—'} over ${hLabel(A ? A.h : 24)}.</div>
       <div class="tmm-big">${money(amt)} to put away</div>
       <div class="tmm-row" id="tmm-ng"></div>
-      ${!opts.length && amt > settings.churchMax ? `<div class="tmm-sub">Buying anyway keeps your money safe in stocks; you only pay the 0.1% fee when you sell.</div>` : ''}
+      <div class="tmm-sub">Buying anyway keeps your money safe in stocks; you only pay the 0.1% fee when you sell.</div>
       <div class="tmm-row"><button class="tmm-plain" id="tmm-x">Keep it</button></div>`);
     const row = $('#tmm-ng', s);
     const all = [...opts, { label: `Buy ${num(o.shares)} ${o.s.acr} anyway`, fn: () => showQuick(job, Object.assign({}, plan, { legs: [o] }), 0, 'buy') }];

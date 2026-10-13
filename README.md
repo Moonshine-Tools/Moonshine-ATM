@@ -35,7 +35,7 @@ One tap reads the cash you're carrying and buys as many whole shares as it cover
 - **Only good buys.** If no stock is expected to rise, it says *No good buys right now* and suggests the faction vault instead of buying into a falling stock.
 - **Leftover cash.** After a purchase, if there's enough left for more shares of a good buy, it offers to buy them. Otherwise it offers the faction vault, or the church for small amounts.
 - **Faction vault.** Deposit to your faction's vault in one tap. The script opens Faction → Armory (the revolver tab) and fills in the money box; you tap **Deposit Money**. Only shown if you're in a faction, and not while you're in hospital, jail or traveling.
-- **Church.** Cash too small for a share can be donated to the church. The script opens the Donate tab and fills in the amount. Only suggested for small amounts, because a donation gives the money away.
+- **Church.** Cash too small for a share can be donated to the church. The script opens the Donate tab and fills in the amount. A last resort: only suggested when the cash can't buy even one share of any stock, and only up to $500, because a donation gives the money away. A cheap share keeps it.
 
 ### 📈 Trade ideas
 The script looks for chances to **sell a little of one stock and buy another** for a small expected gain. Each idea shows:
@@ -131,7 +131,7 @@ This only works if the script was added with **+ → Remote** and the link above
 | Keep cash on hand | $0 | Cash that Deposit leaves in your pocket |
 | Parking stock | none | Where deposits go while the model is still learning |
 | Offer faction vault | on | Show the faction vault option when you're in a faction |
-| Church limit | $100k | Largest amount the script will suggest donating to the church |
+| Church limit | $500 | Largest amount the script will suggest donating to the church, and only when it can't buy a single share |
 | Never trade these | none | Stocks the script will never buy or sell |
 | Price safety margin | 0.25% | Extra room so a price tick doesn't leave you short |
 | Minimum gain after fees | 0.25% | Smallest expected gain worth suggesting |
