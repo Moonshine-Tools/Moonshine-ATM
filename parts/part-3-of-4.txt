@@ -1,36 +1,3 @@
-      <div class="tmm-menu" hidden>
-        <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
-        <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
-        <button class="tmm-mi d" data-a="deposit">Deposit<span class="tmm-mi-note" data-note="cash"></span></button>
-        <button class="tmm-mi b" data-a="bank">Bank<span class="tmm-mi-note" data-note="bank"></span></button>
-      </div>`;
-    document.body.appendChild(root);
-    moon = $('.tmm-moon', root);
-    menu = $('.tmm-menu', root);
-    applyTheme();
-    new MutationObserver(applyTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-    placeMoon();
-    window.addEventListener('resize', () => { placeMoon(); if (!menu.hidden) positionMenu(); });
-
-    menu.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-a]');
-      if (!b) return;
-      hideMenu();
-      ({ market: () => showMarket('overview'), withdraw: askWithdraw, deposit: () => runJob({ action: 'deposit' }), bank: showAdvisor })[b.dataset.a]();
-    });
-    document.addEventListener('pointerdown', (e) => {
-      if (!menu.hidden && !menu.contains(e.target) && !moon.contains(e.target)) hideMenu();
-    }, true);
-
-    // Drag the moon anywhere; it snaps to the nearest screen edge.
-    let drag = null;
-    moon.addEventListener('pointerdown', (e) => {
-      drag = { x0: e.clientX, y0: e.clientY, moved: false };
-      try { moon.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-    });
-    moon.addEventListener('pointermove', (e) => {
-      if (!drag) return;
-      if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
       if (!drag.moved) { drag.moved = true; moon.classList.add('dragging'); hideMenu(); }
       moon.style.left = (e.clientX - MOON / 2) + 'px';
       moon.style.top = (e.clientY - MOON / 2) + 'px';
@@ -605,9 +572,11 @@
   // Keeps shares held for benefit blocks plus your "keep in stocks" amount,
   // sells stocks that are in profit first (weakest outlook first), and lists
   // stocks below what you paid separately, as an option.
-  function planBank(an, user) {
+  const MIN_BANK_LEG = 1e6; // smaller sales stay in stocks as part of what you keep
+  function planBank(an, user, hoursLeft = 0) {
     const L = liveStocks(an, user);
     const useModel = modelUsable(an);
+    const h = (an && an.h) || 168;
     let stockValue = 0, blockValue = 0;
     const win = [], lose = [];
     for (const x of Object.values(L)) {
@@ -615,23 +584,26 @@
       stockValue += x.owned * x.price;
       blockValue += (x.owned - Math.max(0, x.spare)) * x.price;
       if (!x.allowed || x.spare < 1) continue;
-      (x.profit != null && x.profit < 0 ? lose : win).push(x);
+      // Profit expected when the term ends: today's profit moved by the model's outlook.
+      x.expProfit = x.profit;
+      if (x.profit != null && useModel && x.pred && hoursLeft > 0) x.expProfit = (1 + x.profit) * Math.exp(x.pred.mean * Math.min(1, hoursLeft / h)) - 1;
+      (x.expProfit != null && x.expProfit < 0 ? lose : win).push(x);
     }
     const free = stockValue - blockValue;
     const movable = Math.max(0, free - settings.bankKeep);
     const outlook = (x) => (useModel && x.pred ? x.pred.mean : 0);
-    // In profit: weakest expected return first, then the biggest profit. No purchase record: after those.
-    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.profit || 0) - (a.profit || 0)));
-    // Below what you paid: smallest loss first.
-    lose.sort((a, b) => (b.profit - a.profit) || (outlook(a) - outlook(b)));
+    // Expected in profit: weakest outlook first, then the biggest profit. No purchase record: after those.
+    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.expProfit || 0) - (a.expProfit || 0)));
+    // Expected below what you paid: smallest loss first.
+    lose.sort((a, b) => (b.expProfit - a.expProfit) || (outlook(a) - outlook(b)));
+    const minLeg = Math.min(MIN_BANK_LEG, movable);
     const pick = (list, amount) => {
       const legs = []; let left = amount;
       for (const x of list) {
         const net = x.price * (1 - FEE);
-        if (left < net) continue;
         const shares = Math.min(x.spare, Math.floor(left / net));
         const get = shares * net;
-        if (shares < 1 || get < 10000) continue;
+        if (shares < 1 || get < minLeg) continue;
         legs.push({ x, sid: x.s.id, shares, get, gain: x.cost ? shares * (net - x.cost) : null });
         left -= get;
       }
@@ -641,7 +613,7 @@
     const proceeds = legs.reduce((a, l) => a + l.get, 0);
     const lossLegs = pick(lose, movable - proceeds);
     return {
-      stockValue, blockValue, free, movable, legs, proceeds,
+      stockValue, blockValue, free, movable, legs, proceeds, useModel: useModel && hoursLeft > 0,
       gain: legs.reduce((a, l) => a + (l.gain || 0), 0),
       lossLegs, lossProceeds: lossLegs.reduce((a, l) => a + l.get, 0),
       loss: -lossLegs.reduce((a, l) => a + (l.gain || 0), 0),
@@ -657,3 +629,40 @@
     const execs = (await DB.all('executions')).sort((a, b) => a.t - b.t);
     const lastMove = execs.filter((e) => e.kind === 'bank').reduce((m, e) => Math.max(m, e.t), 0);
     const from = Math.max(lastMove, now - r.days * 86400000);
+    const snaps = (await DB.all('snapshots')).filter((x) => x.t * 1000 >= from).sort((a, b) => a.t - b.t);
+    const ev = execs.filter((e) => e.kind === 'cash' && e.t > from && e.cashAfter != null && e.cashBefore != null);
+    const firstSeen = Math.min(...[snaps[0] && snaps[0].t * 1000, ev[0] && ev[0].t].filter(Boolean), now);
+    let dep = 0, depN = 0, wd = 0, wdN = 0, level = 0, top = 0, used = 0, realized = 0, realN = 0;
+    for (const e of ev) {
+      const amt = Math.abs(e.cashAfter - e.cashBefore);
+      if (e.action === 'sell') {
+        wd += amt; wdN++; level -= amt;
+        if (e.cost > 0 && e.shares > 0) { realized += amt - e.shares * e.cost; realN++; }
+      } else { dep += amt; depN++; level += amt; }
+      top = Math.max(top, level);
+      used = Math.max(used, top - level); // the most you'd drawn down at any one time
+    }
+    let gain = null;
+    if (an && an.S && snaps.length > 1) {
+      gain = 0;
+      const px = (sid, t) => { const S = an.S[sid]; if (!S) return NaN; const i = Core.idxAt(S, t); return i < 0 ? NaN : Math.exp(S.lp[i]); };
+      for (let k = 1; k < snaps.length; k++) {
+        const a = snaps[k - 1], b = snaps[k];
+        for (const [sid, sh] of Object.entries(a.holdings || {})) {
+          const d = px(sid, b.t) - px(sid, a.t);
+          if (Number.isFinite(d)) gain += sh * d;
+        }
+      }
+    }
+    const days = (now - Math.max(from, firstSeen)) / 86400000;
+    const rec = Math.max(KEEP_MIN, Math.ceil((used * 1.5) / 1e6) * 1e6);
+    // Growth of your stocks from price changes over the last week and 2 months.
+    const growth = [];
+    if (an && an.S) {
+      const all = (await DB.all('snapshots')).sort((a, b) => a.t - b.t);
+      const px = (sid, t) => { const S = an.S[sid]; if (!S) return NaN; const i = Core.idxAt(S, t); return i < 0 ? NaN : Math.exp(S.lp[i]); };
+      for (const [label, d] of [['Last 7 days', 7], ['Last 2 months', 60]]) {
+        const sn = all.filter((x) => x.t * 1000 >= now - d * 86400000);
+        if (sn.length < 2) continue;
+        let g = 0;
+        for (let k = 1; k < sn.length; k++) for (const [sid, sh] of Object.entries(sn[k - 1].holdings || {})) { const dd = px(sid, sn[k].t) - px(sid, sn[k - 1].t); if (Number.isFinite(dd)) g += sh * dd; }

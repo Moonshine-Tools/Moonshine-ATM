@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      3.2.0
+// @version      3.3.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '3.2.0';
+  const SCRIPT_VERSION = '3.3.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -913,11 +913,12 @@
     return out;
   }
 
-  function termRate(br) {
-    const term = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+  function termRate(br, which) {
+    const chosen = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+    const term = which || chosen;
     const days = TERM_DAYS[term];
     const own = parseFloat(settings.bankApr);
-    if (own > 0) return { term, days, apr: own, src: 'from your Settings' };
+    if (own > 0 && term === chosen) return { term, days, apr: own, src: 'from your Settings' };
     const base = br && br.rates && br.rates[term];
     if (!base) return { term, days, apr: null };
     const m = (br && br.merits) || 0;
@@ -2273,9 +2274,11 @@
   // Keeps shares held for benefit blocks plus your "keep in stocks" amount,
   // sells stocks that are in profit first (weakest outlook first), and lists
   // stocks below what you paid separately, as an option.
-  function planBank(an, user) {
+  const MIN_BANK_LEG = 1e6; // smaller sales stay in stocks as part of what you keep
+  function planBank(an, user, hoursLeft = 0) {
     const L = liveStocks(an, user);
     const useModel = modelUsable(an);
+    const h = (an && an.h) || 168;
     let stockValue = 0, blockValue = 0;
     const win = [], lose = [];
     for (const x of Object.values(L)) {
@@ -2283,23 +2286,26 @@
       stockValue += x.owned * x.price;
       blockValue += (x.owned - Math.max(0, x.spare)) * x.price;
       if (!x.allowed || x.spare < 1) continue;
-      (x.profit != null && x.profit < 0 ? lose : win).push(x);
+      // Profit expected when the term ends: today's profit moved by the model's outlook.
+      x.expProfit = x.profit;
+      if (x.profit != null && useModel && x.pred && hoursLeft > 0) x.expProfit = (1 + x.profit) * Math.exp(x.pred.mean * Math.min(1, hoursLeft / h)) - 1;
+      (x.expProfit != null && x.expProfit < 0 ? lose : win).push(x);
     }
     const free = stockValue - blockValue;
     const movable = Math.max(0, free - settings.bankKeep);
     const outlook = (x) => (useModel && x.pred ? x.pred.mean : 0);
-    // In profit: weakest expected return first, then the biggest profit. No purchase record: after those.
-    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.profit || 0) - (a.profit || 0)));
-    // Below what you paid: smallest loss first.
-    lose.sort((a, b) => (b.profit - a.profit) || (outlook(a) - outlook(b)));
+    // Expected in profit: weakest outlook first, then the biggest profit. No purchase record: after those.
+    win.sort((a, b) => ((a.profit == null) - (b.profit == null)) || (outlook(a) - outlook(b)) || ((b.expProfit || 0) - (a.expProfit || 0)));
+    // Expected below what you paid: smallest loss first.
+    lose.sort((a, b) => (b.expProfit - a.expProfit) || (outlook(a) - outlook(b)));
+    const minLeg = Math.min(MIN_BANK_LEG, movable);
     const pick = (list, amount) => {
       const legs = []; let left = amount;
       for (const x of list) {
         const net = x.price * (1 - FEE);
-        if (left < net) continue;
         const shares = Math.min(x.spare, Math.floor(left / net));
         const get = shares * net;
-        if (shares < 1 || get < 10000) continue;
+        if (shares < 1 || get < minLeg) continue;
         legs.push({ x, sid: x.s.id, shares, get, gain: x.cost ? shares * (net - x.cost) : null });
         left -= get;
       }
@@ -2309,7 +2315,7 @@
     const proceeds = legs.reduce((a, l) => a + l.get, 0);
     const lossLegs = pick(lose, movable - proceeds);
     return {
-      stockValue, blockValue, free, movable, legs, proceeds,
+      stockValue, blockValue, free, movable, legs, proceeds, useModel: useModel && hoursLeft > 0,
       gain: legs.reduce((a, l) => a + (l.gain || 0), 0),
       lossLegs, lossProceeds: lossLegs.reduce((a, l) => a + l.get, 0),
       loss: -lossLegs.reduce((a, l) => a + (l.gain || 0), 0),
@@ -2352,7 +2358,22 @@
     }
     const days = (now - Math.max(from, firstSeen)) / 86400000;
     const rec = Math.max(KEEP_MIN, Math.ceil((used * 1.5) / 1e6) * 1e6);
-    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, any: ev.length > 0 };
+    // Growth of your stocks from price changes over the last week and 2 months.
+    const growth = [];
+    if (an && an.S) {
+      const all = (await DB.all('snapshots')).sort((a, b) => a.t - b.t);
+      const px = (sid, t) => { const S = an.S[sid]; if (!S) return NaN; const i = Core.idxAt(S, t); return i < 0 ? NaN : Math.exp(S.lp[i]); };
+      for (const [label, d] of [['Last 7 days', 7], ['Last 2 months', 60]]) {
+        const sn = all.filter((x) => x.t * 1000 >= now - d * 86400000);
+        if (sn.length < 2) continue;
+        let g = 0;
+        for (let k = 1; k < sn.length; k++) for (const [sid, sh] of Object.entries(sn[k - 1].holdings || {})) { const dd = px(sid, sn[k].t) - px(sid, sn[k - 1].t); if (Number.isFinite(dd)) g += sh * dd; }
+        let v0 = 0; for (const [sid, sh] of Object.entries(sn[0].holdings || {})) { const q = px(sid, sn[0].t); if (Number.isFinite(q)) v0 += sh * q; }
+        const have = (now - sn[0].t * 1000) / 86400000;
+        growth.push({ label: have < d - 1 ? `${label} (${Math.max(1, Math.round(have))} days of data)` : label, gain: g, pct: v0 > 0 ? g / v0 : null });
+      }
+    }
+    return { from, lastMove, days, dep, depN, wd, wdN, used, realized, realN, gain, rec, growth, any: ev.length > 0 };
   }
 
   function walletCard(W) {
@@ -2373,6 +2394,7 @@
         ${W.realN ? kv('Profit locked in by withdrawals', sign(W.realized), W.realized >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
         ${W.gain != null ? kv("Your stocks' price changes", sign(W.gain), W.gain >= 0 ? 'tmm-pos' : 'tmm-neg') : ''}
       </table>
+      ${W.growth.length ? `<h4>Your stocks' growth</h4><table class="tmm-tbl">${W.growth.map((g) => kv(g.label, sign(g.gain) + (g.pct != null ? ` (${pctPlain(g.pct, 2)})` : ''), g.gain >= 0 ? 'tmm-pos' : 'tmm-neg')).join('')}</table>` : ''}
       ${advice}
       <div class="tmm-sub">Counts deposits and withdrawals made with Moonshine; trades made by hand aren't included. The suggestion is 1.5× the most you've drawn, and never under ${money(KEEP_MIN)}.</div></div>`;
   }
@@ -2391,7 +2413,8 @@
       if (!sheet || !document.body.contains(box)) return;
       const bs = bankState();
       const r = termRate(br);
-      const P = planBank(base, user);
+      const hoursLeft = bs && bs.state === 'active' ? (bs.endsAt - Date.now()) / 3600000 : 0;
+      const P = planBank(base, user, hoursLeft);
       const tName = TERM_NAME[r.term];
 
       const bankLine = !bs ? `<div class="tmm-warn">Couldn't read your bank investment from Torn.</div>`
@@ -2405,13 +2428,14 @@
       const kv = (k, v, cls = '') => `<tr><td>${k}</td><td class="${cls}">${v}</td></tr>`;
       const holdings = `<table class="tmm-tbl">
         ${kv('In stocks', money(P.stockValue))}
-        ${kv('Held for benefit blocks (kept)', '−' + money(P.blockValue))}
-        ${kv('Keep in stocks (your setting)', '−' + money(Math.min(settings.bankKeep, P.free)))}
+        ${kv('Kept for benefit blocks', P.blockValue > 0 ? '~' + money(P.blockValue) : 'none')}
+        ${kv('Kept in stocks (your setting)', '~' + money(Math.min(settings.bankKeep, P.free)))}
         ${kv('<b>Can move to the bank</b>', '<b>' + money(P.movable) + '</b>')}
       </table>`;
 
-      const rows = (legs) => `<table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>You get</th><th>Profit</th></tr>
-        ${legs.map((l) => `<tr><td>${esc(l.x.s.acr)}</td><td>${num(l.shares)}</td><td>${money(l.get)}</td><td class="${l.gain == null ? '' : l.gain >= 0 ? 'tmm-pos' : 'tmm-neg'}">${l.gain == null ? '—' : (l.gain >= 0 ? '+' : '') + money(l.gain) + ` (${pctPlain(l.x.profit, 1)})`}</td></tr>`).join('')}</table>`;
+      const cls = (v) => (v == null ? '' : v >= 0 ? 'tmm-pos' : 'tmm-neg');
+      const rows = (legs) => `<table class="tmm-tbl"><tr><th>Stock</th><th>Shares</th><th>You get</th>${P.useModel ? '<th>Profit now</th><th>At end*</th>' : '<th>Profit</th>'}</tr>
+        ${legs.map((l) => `<tr><td>${esc(l.x.s.acr)}</td><td>${num(l.shares)}</td><td>${money(l.get)}</td><td class="${cls(l.gain)}">${l.gain == null ? '—' : P.useModel ? pctPlain(l.x.profit, 1) : (l.gain >= 0 ? '+' : '') + money(l.gain) + ` (${pctPlain(l.x.profit, 1)})`}</td>${P.useModel ? `<td class="${cls(l.x.expProfit)}">${l.x.expProfit == null ? '—' : pctPlain(l.x.expProfit, 1)}</td>` : ''}</tr>`).join('')}</table>`;
 
       let plan, wirePlan = null;
       if (P.movable < 1e5) {
@@ -2422,19 +2446,30 @@
         const bankNow = bs && bs.state !== 'none' ? bs.amount : 0;
         const withLoss = P.proceeds + P.lossProceeds;
         const recoverDays = r.apr && P.lossProceeds > 0 ? P.loss / (P.lossProceeds * r.apr / 100 / 365) : null;
+        const r1w = termRate(br, '1w'), r2m = termRate(br, '2m');
+        const weekly2m = (total) => total * (Math.pow(1 + interest(1, r1w), 60 / 7) - 1);
         const summary = (amt) => r.apr ? `
           <table class="tmm-tbl">
             ${kv('Moved to the bank', money(amt))}
             ${kv(`Interest on that, ${tName} term`, '+' + money(interest(amt, r)), 'tmm-pos')}
-            ${bankNow ? kv(`Whole investment (${money(bankNow + amt)})`, '+' + money(interest(bankNow + amt, r)), 'tmm-pos') : ''}
+          </table>
+          <h4>Whole investment: ${money(bankNow + amt)}</h4>
+          <table class="tmm-tbl">
+            ${r1w.apr ? kv(`1-week term (${r1w.apr.toFixed(2)}%), per week`, '+' + money(interest(bankNow + amt, r1w)), 'tmm-pos') : ''}
+            ${r1w.apr ? kv('1-week terms renewed for 2 months', '+' + money(weekly2m(bankNow + amt)), 'tmm-pos') : ''}
+            ${r2m.apr ? kv(`2-month term (${r2m.apr.toFixed(2)}%)`, '+' + money(interest(bankNow + amt, r2m)), 'tmm-pos') : ''}
+            ${r.term !== '1w' && r.term !== '2m' && r.apr ? kv(`${tName} term (${r.apr.toFixed(2)}%)`, '+' + money(interest(bankNow + amt, r)), 'tmm-pos') : ''}
           </table>
           <div class="tmm-sub">Left in stocks, the same money would need to grow ${(interest(1, r) * 100).toFixed(1)}% in ${r.days} days to match, and stocks aren't guaranteed.</div>` : '';
         plan = `
           <div class="tmm-card">
-            ${P.legs.length ? `<h4>Sell these (in profit after the 0.1% fee)</h4>${rows(P.legs)}
+            ${bs && bs.state === 'active' ? `<div class="tmm-warn">Prices move, so these numbers will change by the time your term ends. Open Bank again then for an up-to-date plan.</div>` : ''}
+            ${P.legs.length ? `<h4>Sell these (${P.useModel ? 'expected in profit when your term ends' : 'in profit after the 0.1% fee'})</h4>${rows(P.legs)}
             <div class="tmm-sub">You get <b>${money(P.proceeds)}</b>, locking in <b class="tmm-pos">+${money(P.gain)}</b> profit.</div>` : `<div class="tmm-sub">None of your spare stocks are above what you paid right now.</div>`}
             <div id="tmm-bank-sum">${summary(P.proceeds)}</div>
-            ${P.lossLegs.length ? `<h4>Below what you paid (optional)</h4>${rows(P.lossLegs)}
+            ${P.useModel ? `<div class="tmm-sub">* Profit after the fee if prices follow the model's outlook until your term ends. A guide, not a promise.</div>` : ''}
+            <div class="tmm-sub">Sales under ${money(MIN_BANK_LEG)} are skipped; that money stays in stocks with what you keep.</div>
+            ${P.lossLegs.length ? `<h4>Not suggested: ${P.useModel ? 'expected below what you paid when your term ends' : 'below what you paid'}</h4>${rows(P.lossLegs)}
               <label class="tmm-check"><input type="checkbox" id="tmm-bank-loss"> Sell these too: ${money(P.lossProceeds)}, a loss of ${money(P.loss)}${recoverDays != null ? `, which the bank interest makes back in about ${Math.max(1, Math.ceil(recoverDays))} day${Math.ceil(recoverDays) > 1 ? 's' : ''}` : ''}.</label>` : ''}
             <div class="tmm-row"><button class="tmm-act" id="tmm-bank-go" ${bs && bs.state === 'active' ? 'disabled' : ''}>${bs && bs.state === 'active' ? `Available when your term ends (${timeLeft(bs.endsAt - Date.now())})` : 'Start selling'}</button></div>
             <div class="tmm-sub">The script fills in each sale; you tap Sell. After the last one, go straight to the bank so the cash is never left on hand.</div>

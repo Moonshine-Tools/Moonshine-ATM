@@ -1,22 +1,3 @@
-    }
-    return userMem;
-  }
-
-  // ---- City Bank ------------------------------------------------------
-  const BANK_URL = 'https://www.torn.com/bank.php';
-  const TERM_DAYS = { '1w': 7, '2w': 14, '1m': 30, '2m': 60, '3m': 90 };
-  const TERM_NAME = { '1w': '1-week', '2w': '2-week', '1m': '1-month', '2m': '2-month', '3m': '3-month' };
-
-  // Torn's base rates (all players) and your Bank Interest merits (+5% of the interest each).
-  async function getBankRates(force = false) {
-    const c = store.get('bankRates', null);
-    if (!force && c && c.rates && Date.now() - c.t < 6 * 3600000) return c;
-    let rates = null, merits = c ? c.merits || 0 : 0;
-    try {
-      const j = await api('torn/?selections=bank');
-      const b = j.bank || {};
-      rates = {};
-      for (const k of Object.keys(TERM_DAYS)) { const v = parseFloat(b[k]); if (Number.isFinite(v) && v > 0) rates[k] = v < 2 ? v * 100 : v; }
       if (!Object.keys(rates).length) rates = null;
     } catch (e) { /* rate unknown; the advisor asks for it */ }
     try {
@@ -29,11 +10,12 @@
     return out;
   }
 
-  function termRate(br) {
-    const term = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+  function termRate(br, which) {
+    const chosen = TERM_DAYS[settings.bankTerm] ? settings.bankTerm : '2m';
+    const term = which || chosen;
     const days = TERM_DAYS[term];
     const own = parseFloat(settings.bankApr);
-    if (own > 0) return { term, days, apr: own, src: 'from your Settings' };
+    if (own > 0 && term === chosen) return { term, days, apr: own, src: 'from your Settings' };
     const base = br && br.rates && br.rates[term];
     if (!base) return { term, days, apr: null };
     const m = (br && br.merits) || 0;
@@ -782,3 +764,36 @@
     root.id = 'tmm-root';
     root.innerHTML = `
       <button class="tmm-moon" aria-label="Moonshine Asset Manager menu" aria-expanded="false">${MOON_SVG}<i class="tmm-dot opp"></i><i class="tmm-dot cash"></i><i class="tmm-dot bank"></i></button>
+      <div class="tmm-menu" hidden>
+        <button class="tmm-mi m" data-a="market">Market<span class="tmm-mi-note" data-note="opp"></span></button>
+        <button class="tmm-mi w" data-a="withdraw">Withdraw</button>
+        <button class="tmm-mi d" data-a="deposit">Deposit<span class="tmm-mi-note" data-note="cash"></span></button>
+        <button class="tmm-mi b" data-a="bank">Bank<span class="tmm-mi-note" data-note="bank"></span></button>
+      </div>`;
+    document.body.appendChild(root);
+    moon = $('.tmm-moon', root);
+    menu = $('.tmm-menu', root);
+    applyTheme();
+    new MutationObserver(applyTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    placeMoon();
+    window.addEventListener('resize', () => { placeMoon(); if (!menu.hidden) positionMenu(); });
+
+    menu.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (!b) return;
+      hideMenu();
+      ({ market: () => showMarket('overview'), withdraw: askWithdraw, deposit: () => runJob({ action: 'deposit' }), bank: showAdvisor })[b.dataset.a]();
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!menu.hidden && !menu.contains(e.target) && !moon.contains(e.target)) hideMenu();
+    }, true);
+
+    // Drag the moon anywhere; it snaps to the nearest screen edge.
+    let drag = null;
+    moon.addEventListener('pointerdown', (e) => {
+      drag = { x0: e.clientX, y0: e.clientY, moved: false };
+      try { moon.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+    moon.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
