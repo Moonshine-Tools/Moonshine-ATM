@@ -1,10 +1,3 @@
-      let round = 0;
-      while (round++ < 40) {
-        let work = false;
-        for (let k = 0; k < ids.length; k++) {
-          if (document.visibilityState === 'hidden' && !force) return;
-          const sid = ids[k], s = m.stocks[sid];
-          const st = prog[sid] || (prog[sid] = {});
           const rec = (await DB.get('hourly', sid)) || { sid, acr: s.acr, t: [], c: [] };
           rec.acr = s.acr;
           const base = `https://tornsy.com/api/${s.acr.toLowerCase()}?interval=h1&limit=2000`;
@@ -562,6 +555,11 @@
   #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
   #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
     background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
+  #tmm-root .tmm-pill.card{display:block;border-radius:14px;padding:6px 6px 8px 12px;width:calc(100vw - 20px);max-width:520px}
+  #tmm-root .tmm-pill-row{display:flex;gap:6px;align-items:center}
+  #tmm-root .tmm-pill-row .tmm-pill-t{flex:1}
+  #tmm-root .tmm-pill-info{margin:4px 6px 0 0;padding-left:16px;font-weight:400;font-size:12.5px;line-height:1.35;color:var(--muted)}
+  #tmm-root .tmm-pill-info li{margin:2px 0}
   #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
   #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   #tmm-root .tmm-pill button{white-space:nowrap}
@@ -573,3 +571,4 @@
 
   const MOON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="tmm-cres"><rect width="32" height="32" fill="#fff"/><circle cx="21" cy="12" r="10" fill="#000"/></mask></defs>
     <circle cx="15" cy="16" r="11" fill="#f3e7b5" mask="url(#tmm-cres)"/>
+    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>

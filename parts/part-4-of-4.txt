@@ -1,8 +1,3 @@
-      updateCashBadge();
-      if (!userMem) return;
-      const an = await analyze();
-      let has = false;
-      if (an.market && (an.validated || settings.showUnvalidated)) {
         const { rot } = findOpportunity(an, userMem, cashNow() ?? userMem.cash);
         const skip = store.get('skip', null);
         has = !!rot && !(skip && skip.k === rot.sell + '>' + rot.buy && Date.now() < skip.until);
@@ -395,8 +390,9 @@
         : settings.autoOpen
         ? `Couldn't find the ${btn} box. Tap the Owned cell on ${esc(stock.acr)} and type <b>${num(shares)}</b>, or use Copy share count.`
         : `Tap the Owned cell on ${esc(stock.acr)}. The share count fills in when the panel opens.`;
-    const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · check the box, tap ${btn}`;
-    if (ok) minimizeSheet(pillText(), extras); // get out of the way of Torn's button
+    const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · tap ${btn}`;
+    // Collapse to a small card at the top: keeps the explanation readable without covering Torn's button.
+    if (ok) minimizeSheet(pillText(), extras, [...(warn || []), ...lines]);
     const guard = async () => {
       if (!filled.input || !sheet || !document.body.contains(status) || !watchTimer) return;
       const inputs = boxInputs(filled.input);
@@ -495,6 +491,9 @@
     const profitLine = isSell && o.profit != null && o.profit >= 0
       ? `You paid about $${o.cost.toFixed(2)} a share, so this sells at ${pctPlain(o.profit, 2)} after the fee: no loss.`
       : null;
+    const avgLine = !isSell && o.owned > 0 && o.cost
+      ? `You own ${num(o.owned)} ${o.s.acr} at an average of $${o.cost.toFixed(2)}. Buying at $${o.price.toFixed(2)} ${o.price < o.cost ? 'lowers' : o.price > o.cost ? 'raises' : 'keeps'} that average${o.price !== o.cost ? ' a little' : ''}.`
+      : null;
     const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
     showLeg({
       kind: 'cash',
@@ -504,6 +503,7 @@
         isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
         quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
         ...(profitLine ? [profitLine] : []),
+        ...(avgLine ? [avgLine] : []),
       ],
       warn,
       alts: plan.alts,

@@ -1,4 +1,3 @@
-    <circle cx="10" cy="19.5" r="1.7" fill="#d8c584"/><circle cx="12.6" cy="24.2" r="1.1" fill="#d8c584"/><circle cx="7.4" cy="13.6" r="1.1" fill="#d8c584"/>
     <circle cx="25.5" cy="23" r=".9" fill="#fff"/><circle cx="27" cy="8.5" r=".7" fill="#fff"/></svg>`;
 
   let root, sheet, pill = null, moon, menu, watchTimer = null;
@@ -120,13 +119,17 @@
   }
 
   // Collapsed state: the sheet hides and a small status pill stays at the top.
-  function showPill(text, cls = '', extra = null) {
+  function showPill(text, cls = '', extra = null, info = null) {
     if (pill) pill.remove();
     const extras = (Array.isArray(extra) ? extra : extra ? [extra] : []).filter(Boolean);
     pill = document.createElement('div');
-    pill.className = 'tmm-pill ' + cls;
+    const infoLines = (info || []).filter(Boolean);
+    pill.className = 'tmm-pill ' + cls + (infoLines.length ? ' card' : '');
     pill.setAttribute('role', 'status');
-    pill.innerHTML = `<span class="tmm-pill-t">${esc(text)}</span>${extras.map((x, i) => `<button data-p="extra" data-i="${i}" class="${i ? '' : 'tmm-pill-go'}">${esc(x.label)}</button>`).join('')}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
+    const row = `<span class="tmm-pill-t">${esc(text)}</span>${extras.map((x, i) => `<button data-p="extra" data-i="${i}" class="${i ? '' : 'tmm-pill-go'}">${esc(x.label)}</button>`).join('')}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
+    pill.innerHTML = infoLines.length
+      ? `<div class="tmm-pill-row">${row}</div><ul class="tmm-pill-info">${infoLines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`
+      : row;
     pill.addEventListener('click', (e) => {
       const b = e.target.closest('[data-p]');
       if (b && b.dataset.p === 'x') return closeSheet();
@@ -135,7 +138,7 @@
     });
     root.appendChild(pill);
   }
-  function minimizeSheet(text, extras = null) { if (!sheet) return; sheet.style.display = 'none'; showPill(text, '', extras); }
+  function minimizeSheet(text, extras = null, info = null) { if (!sheet) return; sheet.style.display = 'none'; showPill(text, '', extras, info); }
   function expandSheet() { if (sheet) sheet.style.display = ''; if (pill) { pill.remove(); pill = null; } }
   function updatePill(text) { const t = pill && pill.querySelector('.tmm-pill-t'); if (t) t.textContent = text; }
 
@@ -507,3 +510,8 @@
     try {
       if (!apiKey()) return;
       if (cashNow() == null || !userMem || Date.now() - userMem.t > 60000) { try { await getUser(55); } catch (e) { /* ignore */ } }
+      updateCashBadge();
+      if (!userMem) return;
+      const an = await analyze();
+      let has = false;
+      if (an.market && (an.validated || settings.showUnvalidated)) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine Asset Manager
 // @namespace    moonshine-asset-manager
-// @version      2.7.0
+// @version      2.7.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -363,7 +363,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '2.7.0';
+  const SCRIPT_VERSION = '2.7.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-Asset-Manager/main/moonshine-asset-manager.user.js';
   const REPO_PAGE = UPDATE_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.*$/, 'https://github.com/$1/$2/commits/$3');
   const updateConfigured = () => !/YOUR-GITHUB-NAME|YOUR-REPO/.test(UPDATE_URL);
@@ -1255,6 +1255,11 @@
   #tmm-root .tmm-spark{display:block;width:100%;height:34px;margin-top:4px}
   #tmm-root .tmm-pill{position:fixed;z-index:99999;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 8px);max-width:calc(100vw - 20px);
     background:var(--bg);color:var(--ink);border:1px solid var(--brass);border-radius:20px;padding:6px 6px 6px 12px;box-shadow:0 3px 12px var(--shadow);display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600}
+  #tmm-root .tmm-pill.card{display:block;border-radius:14px;padding:6px 6px 8px 12px;width:calc(100vw - 20px);max-width:520px}
+  #tmm-root .tmm-pill-row{display:flex;gap:6px;align-items:center}
+  #tmm-root .tmm-pill-row .tmm-pill-t{flex:1}
+  #tmm-root .tmm-pill-info{margin:4px 6px 0 0;padding-left:16px;font-weight:400;font-size:12.5px;line-height:1.35;color:var(--muted)}
+  #tmm-root .tmm-pill-info li{margin:2px 0}
   #tmm-root .tmm-pill.ok{border-color:var(--pos)} #tmm-root .tmm-pill.ok .tmm-pill-t{color:var(--pos)}
   #tmm-root .tmm-pill-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   #tmm-root .tmm-pill button{white-space:nowrap}
@@ -1388,13 +1393,17 @@
   }
 
   // Collapsed state: the sheet hides and a small status pill stays at the top.
-  function showPill(text, cls = '', extra = null) {
+  function showPill(text, cls = '', extra = null, info = null) {
     if (pill) pill.remove();
     const extras = (Array.isArray(extra) ? extra : extra ? [extra] : []).filter(Boolean);
     pill = document.createElement('div');
-    pill.className = 'tmm-pill ' + cls;
+    const infoLines = (info || []).filter(Boolean);
+    pill.className = 'tmm-pill ' + cls + (infoLines.length ? ' card' : '');
     pill.setAttribute('role', 'status');
-    pill.innerHTML = `<span class="tmm-pill-t">${esc(text)}</span>${extras.map((x, i) => `<button data-p="extra" data-i="${i}" class="${i ? '' : 'tmm-pill-go'}">${esc(x.label)}</button>`).join('')}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
+    const row = `<span class="tmm-pill-t">${esc(text)}</span>${extras.map((x, i) => `<button data-p="extra" data-i="${i}" class="${i ? '' : 'tmm-pill-go'}">${esc(x.label)}</button>`).join('')}${sheet ? '<button data-p="open">Details</button>' : ''}<button data-p="x" aria-label="Close">✕</button>`;
+    pill.innerHTML = infoLines.length
+      ? `<div class="tmm-pill-row">${row}</div><ul class="tmm-pill-info">${infoLines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`
+      : row;
     pill.addEventListener('click', (e) => {
       const b = e.target.closest('[data-p]');
       if (b && b.dataset.p === 'x') return closeSheet();
@@ -1403,7 +1412,7 @@
     });
     root.appendChild(pill);
   }
-  function minimizeSheet(text, extras = null) { if (!sheet) return; sheet.style.display = 'none'; showPill(text, '', extras); }
+  function minimizeSheet(text, extras = null, info = null) { if (!sheet) return; sheet.style.display = 'none'; showPill(text, '', extras, info); }
   function expandSheet() { if (sheet) sheet.style.display = ''; if (pill) { pill.remove(); pill = null; } }
   function updatePill(text) { const t = pill && pill.querySelector('.tmm-pill-t'); if (t) t.textContent = text; }
 
@@ -2172,8 +2181,9 @@
         : settings.autoOpen
         ? `Couldn't find the ${btn} box. Tap the Owned cell on ${esc(stock.acr)} and type <b>${num(shares)}</b>, or use Copy share count.`
         : `Tap the Owned cell on ${esc(stock.acr)}. The share count fills in when the panel opens.`;
-    const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · check the box, tap ${btn}`;
-    if (ok) minimizeSheet(pillText(), extras); // get out of the way of Torn's button
+    const pillText = () => `${btn} ${num(cur.shares)} ${stock.acr} · tap ${btn}`;
+    // Collapse to a small card at the top: keeps the explanation readable without covering Torn's button.
+    if (ok) minimizeSheet(pillText(), extras, [...(warn || []), ...lines]);
     const guard = async () => {
       if (!filled.input || !sheet || !document.body.contains(status) || !watchTimer) return;
       const inputs = boxInputs(filled.input);
@@ -2272,6 +2282,9 @@
     const profitLine = isSell && o.profit != null && o.profit >= 0
       ? `You paid about $${o.cost.toFixed(2)} a share, so this sells at ${pctPlain(o.profit, 2)} after the fee: no loss.`
       : null;
+    const avgLine = !isSell && o.owned > 0 && o.cost
+      ? `You own ${num(o.owned)} ${o.s.acr} at an average of $${o.cost.toFixed(2)}. Buying at $${o.price.toFixed(2)} ${o.price < o.cost ? 'lowers' : o.price > o.cost ? 'raises' : 'keeps'} that average${o.price !== o.cost ? ' a little' : ''}.`
+      : null;
     const target = isSell ? (plan.legs.length > 1 ? o.shares * o.price * (1 - FEE) : job.amount) : plan.avail;
     showLeg({
       kind: 'cash',
@@ -2281,6 +2294,7 @@
         isSell ? `At about $${o.price.toFixed(2)}, you get about ${money(value)} after the 0.1% fee.` : `At about $${o.price.toFixed(2)}, this uses about ${money(value)} and leaves ${money(Math.max(0, plan.avail - value) + settings.keepOnHand)} on hand.`,
         quickReason(o, action, plan.mode === 'split' || plan.mode === 'breaks' ? (modelUsable(A) ? 'model' : 'simple') : plan.mode),
         ...(profitLine ? [profitLine] : []),
+        ...(avgLine ? [avgLine] : []),
       ],
       warn,
       alts: plan.alts,
