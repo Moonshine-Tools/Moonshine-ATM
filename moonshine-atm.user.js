@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine ATM
 // @namespace    moonshine-atm
-// @version      4.1.0
+// @version      4.1.1
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '4.1.0';
+  const SCRIPT_VERSION = '4.1.1';
   // True only in the copy kept at the old link (moonshine-asset-manager.user.js), so those installs are told to re-add the script.
   const OLD_LINK = false;
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-ATM/main/moonshine-atm.user.js';
@@ -1485,7 +1485,7 @@
     const ask = new RegExp(`do you want to ${action}|are you sure you want to ${action}`, 'i');
     for (const root of scope) {
       for (const b of tapTargets(root)) {
-        if (!/^(yes|confirm)$/i.test(elText(b))) continue;
+        if (!/^(yes|confirm)\b/i.test(elText(b))) continue; // "Yes", "Confirm", "Confirm transaction"
         let el = b.parentElement;
         for (let d = 0; el && d < 5; d++, el = el.parentElement) if (ask.test(elText(el))) return [b];
       }

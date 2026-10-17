@@ -522,7 +522,7 @@
     const ask = new RegExp(`do you want to ${action}|are you sure you want to ${action}`, 'i');
     for (const root of scope) {
       for (const b of tapTargets(root)) {
-        if (!/^(yes|confirm)$/i.test(elText(b))) continue;
+        if (!/^(yes|confirm)\b/i.test(elText(b))) continue; // "Yes", "Confirm", "Confirm transaction"
         let el = b.parentElement;
         for (let d = 0; el && d < 5; d++, el = el.parentElement) if (ask.test(elText(el))) return [b];
       }
