@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine ATM
 // @namespace    moonshine-atm
-// @version      4.0.0
+// @version      4.1.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '4.0.0';
+  const SCRIPT_VERSION = '4.1.0';
   // True only in the copy kept at the old link (moonshine-asset-manager.user.js), so those installs are told to re-add the script.
   const OLD_LINK = false;
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-ATM/main/moonshine-atm.user.js';
@@ -943,3 +943,21 @@
   // =====================================================================
   //  DATA COLLECTOR (runs while any Torn page is open)
   // =====================================================================
+  const TAB = Math.random().toString(36).slice(2);
+  function isLeader() {
+    const l = store.get('leader', null);
+    if (!l || l.id === TAB || Date.now() - l.ts > 90000) { store.set('leader', { id: TAB, ts: Date.now() }); return true; }
+    return false;
+  }
+
+  const sync = { running: false, status: '' };
+
+  async function collectTick() {
+    if (!apiKey() || document.visibilityState === 'hidden' || !isLeader()) return;
+    try {
+      const m = await getMarket(55);
+      const t = Math.floor(m.t / 60000) * 60;
+      const p = {}; for (const s of Object.values(m.stocks)) p[s.id] = s.price;
+      await DB.put('minute', { t, p });
+      await foldMinutes();
+      const lastUser = await DB.meta('lastUserSnap', 0);

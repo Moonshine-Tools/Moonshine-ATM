@@ -1,3 +1,24 @@
+      if (!drag.moved) { drag.moved = true; moon.classList.add('dragging'); hideMenu(); }
+      moon.style.left = (e.clientX - MOON / 2) + 'px';
+      moon.style.top = (e.clientY - MOON / 2) + 'px';
+      e.preventDefault();
+    });
+    moon.addEventListener('pointerup', (e) => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      moon.classList.remove('dragging');
+      if (moved) snapMoon(e.clientX, e.clientY);
+      else if (menu.hidden) showMenu(); else hideMenu();
+    });
+    moon.addEventListener('pointercancel', () => { if (drag && drag.moved) placeMoon(); drag = null; moon.classList.remove('dragging'); });
+    moon.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (menu.hidden) showMenu(); else hideMenu(); } });
+  }
+
+  const dockPos = () => store.get('dock', { edge: 'right', pos: 0.72 });
+  function placeMoon() {
+    const d = dockPos(), W = window.innerWidth, H = window.innerHeight;
+    const along = (len) => EDGE_GAP + Math.min(1, Math.max(0, d.pos)) * (len - MOON - 2 * EDGE_GAP);
     let x, y;
     if (d.edge === 'left') { x = EDGE_GAP; y = along(H); }
     else if (d.edge === 'top') { x = along(W); y = EDGE_GAP; }
@@ -43,6 +64,7 @@
   }
   function closeSheet() {
     if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+    stopGuide();
     if (sheet) sheet.remove();
     if (pill) pill.remove();
     sheet = null; pill = null;
@@ -671,7 +693,3 @@
     let advice;
     if (W.days < 7) advice = `<div class="tmm-sub">After about a week of use this suggests how much to keep in stocks.${W.any ? ` Early estimate: <b>${money(W.rec)}</b>.` : ''}</div>`;
     else if (W.rec === keep) advice = `<div class="tmm-ok">Your Keep in stocks amount (${money(keep)}) looks right.</div>`;
-    else advice = `<div class="tmm-sub">${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need)
-          ? `Your typical withdrawal is <b>${money(W.typical)}</b>. Keeping 5 stocks that size lets each withdrawal come from one stock that's in profit, so`
-          : W.need >= W.used
-          ? `You withdraw about <b>${money(W.weekly)}</b> a week. Covering a ${W.termName} term (${W.termWeeks} week${W.termWeeks > 1 ? 's' : ''}) with 50% to spare takes ${money(W.need)}.`

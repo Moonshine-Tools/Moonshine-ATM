@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Moonshine ATM
 // @namespace    moonshine-atm
-// @version      4.0.0
+// @version      4.1.0
 // @description  Learns every Torn stock's behaviour, tests itself on unseen data, recommends portfolio rotations, and gives you one-tap Withdraw / Deposit. You always press Torn's own Buy/Sell button.
 // @match        https://www.torn.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,7 +625,7 @@
   // ---- Updates --------------------------------------------------------
   // To publish an update: change the @version line at the top AND this
   // number to the same new value, then push the file to GitHub.
-  const SCRIPT_VERSION = '4.0.0';
+  const SCRIPT_VERSION = '4.1.0';
   // True only in the copy kept at the old link (moonshine-asset-manager.user.js), so those installs are told to re-add the script.
   const OLD_LINK = false;
   const UPDATE_URL = 'https://raw.githubusercontent.com/Moonshine-Tools/Moonshine-ATM/main/moonshine-atm.user.js';
@@ -1442,6 +1442,58 @@
   // After a trade goes through, Torn shows "You have sold… [BACK]". Ask the
   // player to tap BACK (highlighted) and wait for it before moving on, so the
   // next step finds Torn's normal Buy/Sell boxes. Gives up after 3 minutes.
+  // ---- Tap guide ------------------------------------------------------
+  // Puts the gold outline on whichever of Torn's buttons you should tap next.
+  // It only highlights; the script never taps Buy, Sell, Confirm, Deposit or give.
+  // Torn redraws its buttons, so the highlight is re-applied every few hundred ms.
+  let guideTimer = null, guided = [];
+  function stopGuide() {
+    if (guideTimer) { clearInterval(guideTimer); guideTimer = null; }
+    guided.forEach((b) => b.classList.remove('tmm-backhint'));
+    guided = [];
+  }
+  function startGuide(find) {
+    stopGuide();
+    const tick = () => {
+      let now = [];
+      try { now = (find() || []).filter((b) => b && b.isConnected && !b.closest('#tmm-root')); } catch (e) { /* ignore */ }
+      guided.filter((b) => !now.includes(b)).forEach((b) => b.classList.remove('tmm-backhint'));
+      now.forEach((b) => b.classList.add('tmm-backhint'));
+      guided = now;
+    };
+    tick();
+    guideTimer = setInterval(tick, 400);
+  }
+  const tapTargets = (root) => $$("button, a, input[type=button], input[type=submit], [role=button]", root)
+    .filter((b) => !b.closest('#tmm-root') && b.offsetParent !== null);
+  // The button closest to a box (searching outward a few levels) whose label matches.
+  function nearButton(input, re, notRe) {
+    let el = input && input.parentElement;
+    for (let d = 0; el && d < 6; d++, el = el.parentElement) {
+      const hit = tapTargets(el).filter((b) => re.test(elText(b)) && !(notRe && notRe.test(elText(b))));
+      if (hit.length) return hit.slice(0, 1);
+    }
+    return [];
+  }
+  // Stock panel: the Buy/Sell button first, then Torn's Yes/Confirm, then BACK.
+  function tradeTargets(stockId, action, input) {
+    const row = findRow(stockId);
+    if (!row) return [];
+    const scope = panelScope(row);
+    const back = resultBackButtons(row, true);
+    if (back.length) return back;
+    const ask = new RegExp(`do you want to ${action}|are you sure you want to ${action}`, 'i');
+    for (const root of scope) {
+      for (const b of tapTargets(root)) {
+        if (!/^(yes|confirm)$/i.test(elText(b))) continue;
+        let el = b.parentElement;
+        for (let d = 0; el && d < 5; d++, el = el.parentElement) if (ask.test(elText(el))) return [b];
+      }
+    }
+    const inp = input && input.isConnected ? input : findTradeInput(row, action);
+    return nearButton(inp, new RegExp(`^${action}$`, 'i'));
+  }
+
   async function waitForBack(stockId, onWaiting) {
     const row = findRow(stockId);
     if (!row) return;
@@ -1693,7 +1745,9 @@
   #tmm-root .tmm-pill button{white-space:nowrap}
   #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
   #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
+  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important;animation:tmm-pulse 1.4s ease-in-out infinite}
+  @keyframes tmm-pulse{0%,100%{box-shadow:0 0 0 4px rgba(201,162,39,.25)}50%{box-shadow:0 0 0 9px rgba(201,162,39,.5)}}
+  @media (prefers-reduced-motion:reduce){.tmm-backhint{animation:none}}
   input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
   @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
   @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
@@ -1817,6 +1871,7 @@
   }
   function closeSheet() {
     if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+    stopGuide();
     if (sheet) sheet.remove();
     if (pill) pill.remove();
     sheet = null; pill = null;
@@ -2777,6 +2832,7 @@
     input.classList.add('tmm-filled');
     setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
     updatePill(ok ? `${money(amount)} filled in · tap Deposit Money` : `Type ${money(amount)} in the money box, tap Deposit Money`);
+    startGuide(() => nearButton(input.isConnected ? input : findVaultInput(), /^(deposit|donate)/i, /point/i));
     const startCash = domCash();
     const started = Date.now();
     watchTimer = setInterval(() => {
@@ -2784,6 +2840,7 @@
       const c = domCash();
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
+        stopGuide();
         DB.add('executions', { t: Date.now(), kind: 'vault', action: 'deposit', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
         setTimeout(() => clearBox(input), 400); // Torn leaves the old amount in the box
         showPill(`✓ Deposited to faction vault · cash ${money(c)}`, 'ok');
@@ -2888,6 +2945,7 @@
     input.classList.add('tmm-filled');
     setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
     updatePill(ok ? `${money(amount)} filled in · tap give` : `Type ${money(amount)} in the box, then tap give`);
+    startGuide(() => nearButton(input.isConnected ? input : findDonateInput(), /^(give|donate)\b/i));
     const startCash = domCash();
     const started = Date.now();
     watchTimer = setInterval(() => {
@@ -2895,6 +2953,7 @@
       const c = domCash();
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
+        stopGuide();
         DB.add('executions', { t: Date.now(), kind: 'donation', action: 'donate', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
         setTimeout(() => clearBox(input), 400);
         showPill(`✓ Donated · cash ${money(c)}`, 'ok');
@@ -2924,6 +2983,7 @@
     $$('[data-alt]', s).forEach((b) => (b.onclick = () => onAlt(Number(b.dataset.alt))));
     const status = $('#tmm-status', s);
     const filled = await openAndFill(stock.id, action, shares);
+    if (filled.res === 'ok' || filled.res === 'unverified') startGuide(() => tradeTargets(stock.id, action, filled.input));
     const res = filled.res;
     const ok = res === 'ok';
     if (!sheet || !document.body.contains(status)) return;
@@ -2988,6 +3048,7 @@
           if (sheet && sheet.style.display === 'none') showPill(msg, 'ok');
           else if (sheet) minimizeSheet(msg);
         });
+        stopGuide();
         if (sheet !== waitSheet) return; // closed or replaced while waiting
         const next = onDone ? await onDone(cash, status) : false;
         if (next === true) { expandSheet(); return; }

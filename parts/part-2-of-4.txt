@@ -1,21 +1,3 @@
-  const TAB = Math.random().toString(36).slice(2);
-  function isLeader() {
-    const l = store.get('leader', null);
-    if (!l || l.id === TAB || Date.now() - l.ts > 90000) { store.set('leader', { id: TAB, ts: Date.now() }); return true; }
-    return false;
-  }
-
-  const sync = { running: false, status: '' };
-
-  async function collectTick() {
-    if (!apiKey() || document.visibilityState === 'hidden' || !isLeader()) return;
-    try {
-      const m = await getMarket(55);
-      const t = Math.floor(m.t / 60000) * 60;
-      const p = {}; for (const s of Object.values(m.stocks)) p[s.id] = s.price;
-      await DB.put('minute', { t, p });
-      await foldMinutes();
-      const lastUser = await DB.meta('lastUserSnap', 0);
       if (Date.now() - lastUser > 5 * 60000) {
         const u = await getUser(60);
         await snapshot(m, u);
@@ -497,6 +479,58 @@
   // After a trade goes through, Torn shows "You have sold… [BACK]". Ask the
   // player to tap BACK (highlighted) and wait for it before moving on, so the
   // next step finds Torn's normal Buy/Sell boxes. Gives up after 3 minutes.
+  // ---- Tap guide ------------------------------------------------------
+  // Puts the gold outline on whichever of Torn's buttons you should tap next.
+  // It only highlights; the script never taps Buy, Sell, Confirm, Deposit or give.
+  // Torn redraws its buttons, so the highlight is re-applied every few hundred ms.
+  let guideTimer = null, guided = [];
+  function stopGuide() {
+    if (guideTimer) { clearInterval(guideTimer); guideTimer = null; }
+    guided.forEach((b) => b.classList.remove('tmm-backhint'));
+    guided = [];
+  }
+  function startGuide(find) {
+    stopGuide();
+    const tick = () => {
+      let now = [];
+      try { now = (find() || []).filter((b) => b && b.isConnected && !b.closest('#tmm-root')); } catch (e) { /* ignore */ }
+      guided.filter((b) => !now.includes(b)).forEach((b) => b.classList.remove('tmm-backhint'));
+      now.forEach((b) => b.classList.add('tmm-backhint'));
+      guided = now;
+    };
+    tick();
+    guideTimer = setInterval(tick, 400);
+  }
+  const tapTargets = (root) => $$("button, a, input[type=button], input[type=submit], [role=button]", root)
+    .filter((b) => !b.closest('#tmm-root') && b.offsetParent !== null);
+  // The button closest to a box (searching outward a few levels) whose label matches.
+  function nearButton(input, re, notRe) {
+    let el = input && input.parentElement;
+    for (let d = 0; el && d < 6; d++, el = el.parentElement) {
+      const hit = tapTargets(el).filter((b) => re.test(elText(b)) && !(notRe && notRe.test(elText(b))));
+      if (hit.length) return hit.slice(0, 1);
+    }
+    return [];
+  }
+  // Stock panel: the Buy/Sell button first, then Torn's Yes/Confirm, then BACK.
+  function tradeTargets(stockId, action, input) {
+    const row = findRow(stockId);
+    if (!row) return [];
+    const scope = panelScope(row);
+    const back = resultBackButtons(row, true);
+    if (back.length) return back;
+    const ask = new RegExp(`do you want to ${action}|are you sure you want to ${action}`, 'i');
+    for (const root of scope) {
+      for (const b of tapTargets(root)) {
+        if (!/^(yes|confirm)$/i.test(elText(b))) continue;
+        let el = b.parentElement;
+        for (let d = 0; el && d < 5; d++, el = el.parentElement) if (ask.test(elText(el))) return [b];
+      }
+    }
+    const inp = input && input.isConnected ? input : findTradeInput(row, action);
+    return nearButton(inp, new RegExp(`^${action}$`, 'i'));
+  }
+
   async function waitForBack(stockId, onWaiting) {
     const row = findRow(stockId);
     if (!row) return;
@@ -748,7 +782,9 @@
   #tmm-root .tmm-pill button{white-space:nowrap}
   #tmm-root .tmm-pill button.tmm-pill-go{background:var(--brass);color:var(--onbrass);font-weight:700}
   #tmm-root .tmm-pill button{background:var(--bg2);border:0;border-radius:14px;cursor:pointer;font-size:12px;padding:5px 9px;color:var(--ink)}
-  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important}
+  .tmm-backhint{outline:3px solid #c9a227 !important;outline-offset:3px;box-shadow:0 0 0 6px rgba(201,162,39,.35) !important;animation:tmm-pulse 1.4s ease-in-out infinite}
+  @keyframes tmm-pulse{0%,100%{box-shadow:0 0 0 4px rgba(201,162,39,.25)}50%{box-shadow:0 0 0 9px rgba(201,162,39,.5)}}
+  @media (prefers-reduced-motion:reduce){.tmm-backhint{animation:none}}
   input.tmm-filled{outline:3px solid #c9a227 !important;outline-offset:2px;background:#fff8dc !important;color:#000 !important}
   @media (prefers-reduced-motion:no-preference){#tmm-root .tmm-sheet{animation:tmmUp .18s ease-out}}
   @keyframes tmmUp{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}`;
@@ -806,24 +842,3 @@
     moon.addEventListener('pointermove', (e) => {
       if (!drag) return;
       if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
-      if (!drag.moved) { drag.moved = true; moon.classList.add('dragging'); hideMenu(); }
-      moon.style.left = (e.clientX - MOON / 2) + 'px';
-      moon.style.top = (e.clientY - MOON / 2) + 'px';
-      e.preventDefault();
-    });
-    moon.addEventListener('pointerup', (e) => {
-      if (!drag) return;
-      const moved = drag.moved;
-      drag = null;
-      moon.classList.remove('dragging');
-      if (moved) snapMoon(e.clientX, e.clientY);
-      else if (menu.hidden) showMenu(); else hideMenu();
-    });
-    moon.addEventListener('pointercancel', () => { if (drag && drag.moved) placeMoon(); drag = null; moon.classList.remove('dragging'); });
-    moon.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (menu.hidden) showMenu(); else hideMenu(); } });
-  }
-
-  const dockPos = () => store.get('dock', { edge: 'right', pos: 0.72 });
-  function placeMoon() {
-    const d = dockPos(), W = window.innerWidth, H = window.innerHeight;
-    const along = (len) => EDGE_GAP + Math.min(1, Math.max(0, d.pos)) * (len - MOON - 2 * EDGE_GAP);

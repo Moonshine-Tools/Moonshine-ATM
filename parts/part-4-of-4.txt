@@ -1,3 +1,7 @@
+    else advice = `<div class="tmm-sub">${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need)
+          ? `Your typical withdrawal is <b>${money(W.typical)}</b>. Keeping 5 stocks that size lets each withdrawal come from one stock that's in profit, so`
+          : W.need >= W.used
+          ? `You withdraw about <b>${money(W.weekly)}</b> a week. Covering a ${W.termName} term (${W.termWeeks} week${W.termWeeks > 1 ? 's' : ''}) with 50% to spare takes ${money(W.need)}.`
           : `You've drawn up to <b>${money(W.used)}</b> at once.`} ${5 * W.typical > KEEP_MIN + Math.max(W.used, W.need) ? '' : `With ${money(KEEP_MIN)} for trading, `}${W.rec > keep ? 'raise' : 'lower'} Keep in stocks from ${money(keep)} to <b>${money(W.rec)}</b>.</div>
         <div class="tmm-row"><button class="tmm-act" id="tmm-keep-use">Use ${money(W.rec)}</button></div>`;
     return `<div class="tmm-card"><h4>Your stock wallet, ${since}</h4>
@@ -326,6 +330,7 @@
     input.classList.add('tmm-filled');
     setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
     updatePill(ok ? `${money(amount)} filled in · tap Deposit Money` : `Type ${money(amount)} in the money box, tap Deposit Money`);
+    startGuide(() => nearButton(input.isConnected ? input : findVaultInput(), /^(deposit|donate)/i, /point/i));
     const startCash = domCash();
     const started = Date.now();
     watchTimer = setInterval(() => {
@@ -333,6 +338,7 @@
       const c = domCash();
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
+        stopGuide();
         DB.add('executions', { t: Date.now(), kind: 'vault', action: 'deposit', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
         setTimeout(() => clearBox(input), 400); // Torn leaves the old amount in the box
         showPill(`✓ Deposited to faction vault · cash ${money(c)}`, 'ok');
@@ -437,6 +443,7 @@
     input.classList.add('tmm-filled');
     setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150);
     updatePill(ok ? `${money(amount)} filled in · tap give` : `Type ${money(amount)} in the box, then tap give`);
+    startGuide(() => nearButton(input.isConnected ? input : findDonateInput(), /^(give|donate)\b/i));
     const startCash = domCash();
     const started = Date.now();
     watchTimer = setInterval(() => {
@@ -444,6 +451,7 @@
       const c = domCash();
       if (startCash != null && c != null && c < startCash) {
         clearInterval(watchTimer); watchTimer = null;
+        stopGuide();
         DB.add('executions', { t: Date.now(), kind: 'donation', action: 'donate', amount: startCash - c, cashBefore: startCash, cashAfter: c }).catch(() => {});
         setTimeout(() => clearBox(input), 400);
         showPill(`✓ Donated · cash ${money(c)}`, 'ok');
@@ -473,6 +481,7 @@
     $$('[data-alt]', s).forEach((b) => (b.onclick = () => onAlt(Number(b.dataset.alt))));
     const status = $('#tmm-status', s);
     const filled = await openAndFill(stock.id, action, shares);
+    if (filled.res === 'ok' || filled.res === 'unverified') startGuide(() => tradeTargets(stock.id, action, filled.input));
     const res = filled.res;
     const ok = res === 'ok';
     if (!sheet || !document.body.contains(status)) return;
@@ -537,6 +546,7 @@
           if (sheet && sheet.style.display === 'none') showPill(msg, 'ok');
           else if (sheet) minimizeSheet(msg);
         });
+        stopGuide();
         if (sheet !== waitSheet) return; // closed or replaced while waiting
         const next = onDone ? await onDone(cash, status) : false;
         if (next === true) { expandSheet(); return; }

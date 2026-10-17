@@ -6,7 +6,7 @@
 
 In Torn, cash on hand gets mugged, so most players keep their money in the stock market. Moonshine makes that fast and smart. Get cash out in a couple of taps, put it back just as quickly, and let the script look for small, tested trades so money you keep in stocks earns a little instead of sitting idle. **For savings you won't need for a while, Torn's City Bank pays more; see [Stocks or the bank?](#stocks-or-the-bank).**
 
-It fills in the numbers. **You always press Torn's own Buy, Sell or give button.**
+It fills in the numbers and puts a pulsing gold outline on the next Torn button to tap (Buy or Sell, then Confirm, then Back; Deposit Money in the faction vault; give at the church). **You always press Torn's buttons yourself.**
 
 ---
 
